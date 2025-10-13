@@ -79,7 +79,7 @@
         function formatDateForKey(date) { return date.toISOString().split('T')[0]; }
 
         function logout() {
-            localStorage.removeItem('menuAppUser');
+            sessionStorage.removeItem('menuAppUser');
             window.location.reload();
         }
 
@@ -129,7 +129,7 @@
 
             if (takeawaySelections && Object.keys(takeawaySelections).length > 0) {
                  Object.entries(takeawaySelections).sort(([a], [b]) => a - b).forEach(([number, selections]) => {
-                    summaryHtml += `<div class="mb-8"><h3 class="text-xl font-bold mb-4 text-green-700">Tu Menú para Llevar #${number}</h3><div class="space-y-4">`;
+                    summaryHtml += `<div class="mb-8"><h3 class="text-xl font-bold mb-4 text-green-700">Tu Menú Adicional #${number}</h3><div class="space-y-4">`;
                     days.forEach(day => {
                         const selectionKey = selections[day] || 'ninguna';
                         const selectionText = (selectionKey !== 'ninguna') 
@@ -171,7 +171,7 @@
                 const data = await validateEmployee(enteredId);
                 if (data) {
                     employeeData = data;
-                    localStorage.setItem('menuAppUser', JSON.stringify(employeeData));
+                    sessionStorage.setItem('menuAppUser', JSON.stringify(employeeData));
                     document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
                     document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
                     document.getElementById('app-container').classList.remove('hidden');
@@ -211,7 +211,7 @@
             onAuthStateChanged(auth, async user => {
                 if (user) {
                     userId = user.uid;
-                    const storedUserJSON = localStorage.getItem('menuAppUser');
+                    const storedUserJSON = sessionStorage.getItem('menuAppUser');
                     if(storedUserJSON) {
                         const storedUser = JSON.parse(storedUserJSON);
                         if (storedUser && storedUser.employeeId) {
@@ -220,8 +220,6 @@
                             document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
                             document.getElementById('app-container').classList.remove('hidden');
                             renderVisualizationView();
-                        } else {
-                            localStorage.removeItem('menuAppUser');
                         }
                     }
                 }

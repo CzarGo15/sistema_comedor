@@ -208,7 +208,7 @@
 
             detailsHtml += `</div>
                 <div class="mt-8 border-t pt-6">
-                     <button id="add-takeaway-btn" data-employee-id="${selection.employeeId}" data-employee-name="${selection.employeeName}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Menú para Llevar Adicional</button>
+                     <button id="add-takeaway-btn" data-employee-id="${selection.employeeId}" data-employee-name="${selection.employeeName}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Menú Adicional</button>
                 </div>
             </div>`;
             deliveryDetails.innerHTML = detailsHtml;
@@ -248,7 +248,7 @@
             const title = document.getElementById('add-meal-title');
             const optionsContainer = document.getElementById('add-meal-options');
             
-            title.textContent = isTakeaway ? `Agregar Menú para Llevar a ${employeeName}` : `Agregar Comida para ${employeeName}`;
+            title.textContent = isTakeaway ? `Agregar Menú Adicional a ${employeeName}` : `Agregar Comida para ${employeeName}`;
             
             const dayMenu = currentMenu[currentDayName];
             optionsContainer.innerHTML = `

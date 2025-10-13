@@ -89,8 +89,8 @@
                     <a href="./Monitor_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Monitorización</a>
                     <a href="./Historico_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Histórico</a>
                     <a href="./Entrega_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Entrega</a>
-                    <a href="./Seleccion_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Seleccionar (Empleado)</a>
-                    <a href="./Visualizar_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Visualizar (Empleado)</a>
+                    <a href="./Seleccion_Menu.html" target="_blank" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Seleccionar (Empleado)</a>
+                    <a href="./Visualizar_Menu.html" target="_blank" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Visualizar (Empleado)</a>
                 </nav>
             </div>
         </header>
@@ -169,14 +169,12 @@
         
         function getMenuWeek(date) {
             const current = new Date(date);
-            current.setDate(current.getDate() + 7); // Start with next week
-            
             const day = current.getDay();
-            // From Sunday onwards, we manage the week after the next one.
-            if (day === 0) { // If it's Sunday
-                 current.setDate(current.getDate() + 7); // Move one more week
-            }
             
+            if (day >= 0) { 
+                 current.setDate(current.getDate() + 7);
+            }
+
             const newDay = current.getDay();
             const diffToMonday = newDay === 0 ? -6 : 1 - newDay;
             const monday = new Date(current.setDate(current.getDate() + diffToMonday));
@@ -225,7 +223,7 @@
         }
 
         function logout() {
-            localStorage.removeItem('menuAppUser');
+            sessionStorage.removeItem('menuAppUser');
             window.location.reload();
         }
 
@@ -435,7 +433,7 @@
                 const data = await validateEmployee(enteredId);
                 if (data && data.isAdmin) {
                     employeeData = data;
-                    localStorage.setItem('menuAppUser', JSON.stringify(employeeData));
+                    sessionStorage.setItem('menuAppUser', JSON.stringify(employeeData));
                     document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
                     document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
                     document.getElementById('admin-panel').classList.remove('hidden');
@@ -587,7 +585,7 @@
                 if (user) {
                     userId = user.uid;
                     await setupInitialData();
-                    const storedUserJSON = localStorage.getItem('menuAppUser');
+                    const storedUserJSON = sessionStorage.getItem('menuAppUser');
                     if(storedUserJSON) {
                         const storedUser = JSON.parse(storedUserJSON);
                         if (storedUser && storedUser.isAdmin) {

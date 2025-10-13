@@ -45,8 +45,8 @@
     <!-- MODAL PARA MENÚ PARA LLEVAR INICIAL -->
     <div id="initial-takeaway-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
         <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center">
-            <h2 class="text-2xl font-bold mb-4">Menú para Llevar</h2>
-            <p class="text-gray-600 mb-6">¿Deseas agregar tu primer menú para llevar?</p>
+            <h2 class="text-2xl font-bold mb-4">Menú Adicional</h2>
+            <p class="text-gray-600 mb-6">¿Deseas agregar un Menú Adicional?</p>
             <div class="flex justify-center space-x-4">
                 <button id="add-first-takeaway-btn" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Sí, agregar</button>
                 <button id="no-takeaway-btn" class="bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg hover:bg-gray-400">No, gracias</button>
@@ -100,7 +100,7 @@
 
         function logout() {
             if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
-            localStorage.removeItem('menuAppUser');
+            sessionStorage.removeItem('menuAppUser');
             window.location.reload();
         }
 
@@ -132,7 +132,7 @@
             const settings = settingsDoc.exists() ? settingsDoc.data() : { isOrderingOpen: false };
             
             const now = new Date();
-            const dayOfWeek = now.getDay(); // 0 = Sunday, 5 = Friday
+            const dayOfWeek = now.getDay();
             const hour = now.getHours();
             
             const isSelectionPeriodOver = (dayOfWeek === 5 && hour >= 17) || dayOfWeek === 6 || dayOfWeek === 0;
@@ -151,7 +151,7 @@
             const selectionData = await loadFullSelectionData(nextWeekDates.start, employeeData.employeeId);
             const currentSelection = isTakeaway ? (selectionData?.takeawaySelections?.[takeawayNumber] || {}) : (selectionData?.mainSelection || {});
             
-            const title = isTakeaway ? `Elige tu menú PARA LLEVAR #${takeawayNumber}` : "Elige tu menú para la semana";
+            const title = isTakeaway ? `Elige tu Menú Adicional #${takeawayNumber}` : "Elige tu menú para la semana";
             const buttonText = "Guardar Selección";
 
             mainContent.innerHTML = `
@@ -214,7 +214,7 @@
 
             if (takeawaySelections) {
                 Object.entries(takeawaySelections).sort(([a], [b]) => a - b).forEach(([number, selections]) => {
-                    summaryHtml += `<div><h3 class="text-xl font-bold mb-4 text-green-700">Tu Menú para Llevar #${number}</h3><div class="space-y-4">`;
+                    summaryHtml += `<div><h3 class="text-xl font-bold mb-4 text-green-700">Tu Menú Adicional #${number}</h3><div class="space-y-4">`;
                     days.forEach(day => {
                         const selection = selections[day] || 'ninguna';
                         const selectionText = (selection !== 'ninguna') 
@@ -229,7 +229,7 @@
             const nextTakeawayNumber = takeawaySelections ? Object.keys(takeawaySelections).length + 1 : 1;
             summaryHtml += `
                 <div class="mt-8 text-center border-t pt-6 space-y-4">
-                    <button id="add-another-takeaway-btn" data-next-number="${nextTakeawayNumber}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Otro Menú para Llevar</button>
+                    <button id="add-another-takeaway-btn" data-next-number="${nextTakeawayNumber}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Otro Menú Adicional</button>
                     <div>
                         <p class="text-sm text-gray-500 mb-2">Tu sesión se cerrará automáticamente en 30 segundos.</p>
                         <button id="close-summary-btn" class="bg-gray-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-gray-600">Cerrar Sesión Ahora</button>
@@ -339,7 +339,7 @@
                 const data = await validateEmployee(enteredId);
                 if (data) {
                     employeeData = data;
-                    localStorage.setItem('menuAppUser', JSON.stringify(employeeData));
+                    sessionStorage.setItem('menuAppUser', JSON.stringify(employeeData));
                     document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
                     document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
                     document.getElementById('app-container').classList.remove('hidden');
@@ -390,7 +390,7 @@
             onAuthStateChanged(auth, async user => {
                 if (user) {
                     userId = user.uid;
-                    const storedUserJSON = localStorage.getItem('menuAppUser');
+                    const storedUserJSON = sessionStorage.getItem('menuAppUser');
                     if(storedUserJSON) {
                         const storedUser = JSON.parse(storedUserJSON);
                         if (storedUser && storedUser.employeeId) {
@@ -399,8 +399,6 @@
                             document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
                             document.getElementById('app-container').classList.remove('hidden');
                             initializeUserView();
-                        } else {
-                            localStorage.removeItem('menuAppUser');
                         }
                     }
                 }
