@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entrega de Menú</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .loader { border-top-color: #3498db; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .notification { transition: opacity 0.5s, transform 0.5s; }
+        .modal-overlay { transition: opacity 0.3s ease-in-out; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div id="app-container" class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="bg-white shadow-md rounded-2xl p-6 mb-8">
+             <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                    <img src="https://downloads.puertocoatzacoalcos.com.mx/imagenes/LOGOASPN.png" alt="Logo ASIPONA" class="h-12">
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-900">Entrega de Comidas</h1>
+                        <p class="text-gray-500 mt-1" id="current-day-display"></p>
+                    </div>
+                </div>
+                <button id="logout-button" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600">Salir</button>
+            </div>
+        </header>
+        
+        <main id="main-content">
+            <div id="search-section" class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-xl font-semibold mb-4">Buscar Empleado</h2>
+                <div class="flex items-center space-x-4">
+                    <input type="text" id="search-employee-id" placeholder="Número de empleado" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button id="search-button" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700">Buscar</button>
+                </div>
+                <p id="search-error" class="text-red-500 text-sm mt-2 h-4"></p>
+            </div>
+
+            <div id="delivery-details" class="mt-8 hidden">
+                 <!-- Los detalles del menú se cargarán aquí -->
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL PARA AGREGAR COMIDA -->
+    <div id="add-meal-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg">
+            <h2 class="text-2xl font-bold mb-4" id="add-meal-title"></h2>
+            <div id="add-meal-options" class="space-y-2"></div>
+            <div class="mt-6 flex justify-end space-x-4">
+                <button id="cancel-add-meal-btn" class="bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg hover:bg-gray-400">Cancelar</button>
+                <button id="save-add-meal-btn" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700">Guardar Comida</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contenedor para notificaciones -->
+    <div id="notification-container" class="fixed bottom-5 right-5 z-50 space-y-2"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, updateDoc, setDoc, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        let db, auth;
+        let currentWeekDates, currentDayName, currentMenu;
+        const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+        function getWeekDates(date) {
+            const current = new Date(date);
+            const day = current.getDay();
+            const hour = date.getHours();
+
+            if ((day === 5 && hour >= 17) || day === 6 || day === 0) {
+                 const nextWeekStartDate = new Date(current);
+                nextWeekStartDate.setDate(current.getDate() + (7 - day + 1) % 7);
+                nextWeekStartDate.setHours(0,0,0,0);
+                 const diff = nextWeekStartDate.getDay() - 1;
+                 if(diff < 0) diff = 6;
+                 nextWeekStartDate.setDate(nextWeekStartDate.getDate() - diff);
+                return { start: nextWeekStartDate };
+            }
+            
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            const monday = new Date(current.setDate(current.getDate() + diffToMonday));
+            monday.setHours(0, 0, 0, 0);
+            return { start: monday };
+        }
+
+        function formatDateForKey(date) { return date.toISOString().split('T')[0]; }
+
+        function showNotification(message, isError = false) {
+            const container = document.getElementById('notification-container');
+            const notification = document.createElement('div');
+            notification.className = `notification p-4 rounded-lg shadow-lg text-white ${isError ? 'bg-red-500' : 'bg-green-500'} transform translate-y-2 opacity-0`;
+            notification.textContent = message;
+            container.appendChild(notification);
+            
+            requestAnimationFrame(() => {
+                notification.classList.remove('translate-y-2', 'opacity-0');
+            });
+
+            setTimeout(() => {
+                notification.classList.add('opacity-0');
+                notification.addEventListener('transitionend', () => notification.remove());
+            }, 3000);
+        }
+
+        function resetView() {
+            document.getElementById('search-section').classList.remove('hidden');
+            document.getElementById('delivery-details').classList.add('hidden');
+            document.getElementById('search-employee-id').value = '';
+            document.getElementById('search-employee-id').focus();
+        }
+
+        async function searchEmployee() {
+            const searchInput = document.getElementById('search-employee-id');
+            const employeeId = searchInput.value.trim();
+            const errorEl = document.getElementById('search-error');
+            const deliveryDetails = document.getElementById('delivery-details');
+            const searchSection = document.getElementById('search-section');
+            
+            errorEl.textContent = '';
+            deliveryDetails.innerHTML = '<div class="flex justify-center items-center"><div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div></div>';
+            deliveryDetails.classList.remove('hidden');
+            
+            if (!employeeId) {
+                errorEl.textContent = "Por favor, introduce un número de empleado.";
+                deliveryDetails.classList.add('hidden');
+                return;
+            }
+
+            const weekKey = formatDateForKey(currentWeekDates.start);
+            const selectionId = `${weekKey}_${employeeId}`;
+            
+            const menuDocRef = doc(db, "menus", weekKey);
+            const menuDocSnap = await getDoc(menuDocRef);
+            currentMenu = menuDocSnap.exists() ? menuDocSnap.data().menu : {};
+
+            const selDocRef = doc(db, "selections", selectionId);
+            const selDocSnap = await getDoc(selDocRef);
+
+            if (!selDocSnap.exists()) {
+                const employeeDoc = await getDoc(doc(db, 'employees', employeeId));
+                if (!employeeDoc.exists()) {
+                    errorEl.textContent = "Número de empleado no válido.";
+                    deliveryDetails.classList.add('hidden');
+                    return;
+                }
+                searchSection.classList.add('hidden');
+                deliveryDetails.innerHTML = `<div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-bold">${employeeDoc.data().name}</h2>
+                    <p class="text-gray-500 mb-6">Este empleado no tiene menú seleccionado para la semana.</p>
+                    <button id="add-meal-today-btn" data-employee-id="${employeeId}" data-employee-name="${employeeDoc.data().name}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Comida para Hoy</button>
+                    <button id="consult-other-btn-noselection" class="ml-4 text-sm bg-blue-100 text-blue-700 font-semibold py-2 px-4 rounded-lg hover:bg-blue-200">Consultar otro usuario</button>
+                </div>`;
+                document.getElementById('add-meal-today-btn').addEventListener('click', openAddMealModal);
+                document.getElementById('consult-other-btn-noselection').addEventListener('click', resetView);
+                return;
+            }
+            
+            searchSection.classList.add('hidden');
+            renderDeliveryDetails(selDocSnap.data());
+        }
+        
+        function renderDeliveryDetails(selection) {
+             const deliveryDetails = document.getElementById('delivery-details');
+             let detailsHtml = `<div class="bg-white p-6 rounded-2xl shadow-lg">
+                                <div class="flex justify-between items-start">
+                                    <div>
+                                        <h2 class="text-2xl font-bold">${selection.employeeName}</h2>
+                                        <p class="text-gray-500 mb-6">Comidas para hoy, ${currentDayName}</p>
+                                    </div>
+                                    <button id="consult-other-btn" class="text-sm bg-blue-100 text-blue-700 font-semibold py-2 px-4 rounded-lg hover:bg-blue-200">Consultar otro usuario</button>
+                                </div>
+                                <div id="meals-container" class="space-y-4">`;
+
+            let hasMeals = false;
+            // Menú Principal
+            const mainSelectionKey = selection.mainSelection?.[currentDayName];
+            if (mainSelectionKey && mainSelectionKey !== 'ninguna') {
+                hasMeals = true;
+                const mealName = currentMenu[currentDayName]?.[mainSelectionKey]?.fuerte || 'Platillo no definido';
+                const isDelivered = selection.status?.[currentDayName]?.main === 'delivered';
+                detailsHtml += createMealCard('main', 0, 'Menú Principal', mealName, isDelivered, selection.weekStart, selection.employeeId);
+            }
+
+            // Menús para Llevar
+            if (selection.takeawaySelections) {
+                Object.entries(selection.takeawaySelections).forEach(([number, takeaway]) => {
+                    const takeawaySelectionKey = takeaway[currentDayName];
+                    if (takeawaySelectionKey && takeawaySelectionKey !== 'ninguna') {
+                        hasMeals = true;
+                        const mealName = currentMenu[currentDayName]?.[takeawaySelectionKey]?.fuerte || 'Platillo no definido';
+                        const isDelivered = selection.status?.[currentDayName]?.[`takeaway_${number}`] === 'delivered';
+                        detailsHtml += createMealCard('takeaway', number, `Menú para Llevar #${number}`, mealName, isDelivered, selection.weekStart, selection.employeeId);
+                    }
+                });
+            }
+
+            if (!hasMeals) {
+                detailsHtml += `<p class="text-gray-700">Este empleado no solicitó comida para el día de hoy.</p>`;
+            }
+
+            detailsHtml += `</div>
+                <div class="mt-8 border-t pt-6">
+                     <button id="add-takeaway-btn" data-employee-id="${selection.employeeId}" data-employee-name="${selection.employeeName}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Menú para Llevar Adicional</button>
+                </div>
+            </div>`;
+            deliveryDetails.innerHTML = detailsHtml;
+
+            document.querySelectorAll('.delivery-action-btn').forEach(button => button.addEventListener('click', handleDeliveryAction));
+            document.getElementById('consult-other-btn').addEventListener('click', resetView);
+            document.getElementById('add-takeaway-btn').addEventListener('click', openAddMealModal);
+        }
+
+        function createMealCard(type, number, title, mealName, isDelivered, weekStart, employeeId) {
+             const actionText = isDelivered ? 'REVERTIR' : 'ENTREGAR';
+             const buttonColor = isDelivered ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-600 hover:bg-green-700';
+             const cardColor = isDelivered ? 'bg-green-100' : 'bg-blue-50';
+             const selectionId = `${weekStart}_${employeeId}`;
+
+            return `<div class="flex justify-between items-center p-4 rounded-lg ${cardColor}">
+                        <div>
+                            <h3 class="font-bold text-lg">${title}</h3>
+                            <p class="text-gray-700">${mealName}</p>
+                        </div>
+                        <button 
+                            class="delivery-action-btn font-bold py-2 px-6 rounded-lg text-white ${buttonColor}"
+                            data-selection-id="${selectionId}"
+                            data-day="${currentDayName}"
+                            data-type="${type}"
+                            data-number="${number}"
+                            data-delivered="${isDelivered}">
+                            ${actionText}
+                        </button>
+                    </div>`;
+        }
+        
+        function openAddMealModal(event) {
+            const { employeeId, employeeName } = event.target.dataset;
+            const isTakeaway = event.target.id === 'add-takeaway-btn';
+            const modal = document.getElementById('add-meal-modal');
+            const title = document.getElementById('add-meal-title');
+            const optionsContainer = document.getElementById('add-meal-options');
+            
+            title.textContent = isTakeaway ? `Agregar Menú para Llevar a ${employeeName}` : `Agregar Comida para ${employeeName}`;
+            
+            const dayMenu = currentMenu[currentDayName];
+            optionsContainer.innerHTML = `
+                <p class="font-semibold">Selecciona una opción para hoy (${currentDayName}):</p>
+                <div class="flex flex-col space-y-2">
+                    <label class="flex items-center"><input type="radio" name="meal-option" value="opcion1" class="mr-2">${dayMenu?.opcion1?.fuerte || 'Opción 1 no definida'}</label>
+                    <label class="flex items-center"><input type="radio" name="meal-option" value="opcion2" class="mr-2">${dayMenu?.opcion2?.fuerte || 'Opción 2 no definida'}</label>
+                </div>`;
+            
+            const saveBtn = document.getElementById('save-add-meal-btn');
+            const newSaveBtn = saveBtn.cloneNode(true);
+            saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+
+            newSaveBtn.onclick = () => saveAddedMeal(employeeId, employeeName, isTakeaway);
+            
+            modal.classList.remove('hidden');
+        }
+
+        async function saveAddedMeal(employeeId, employeeName, isTakeaway) {
+            const selectedOption = document.querySelector('input[name="meal-option"]:checked')?.value;
+            if (!selectedOption) {
+                showNotification("Debes seleccionar una opción.", true);
+                return;
+            }
+
+            const weekKey = formatDateForKey(currentWeekDates.start);
+            const selectionId = `${weekKey}_${employeeId}`;
+            const docRef = doc(db, "selections", selectionId);
+
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const selectionData = docSnap.data();
+                    let updatePath;
+                    if (isTakeaway) {
+                        const nextTakeawayNum = (selectionData.takeawaySelections ? Object.keys(selectionData.takeawaySelections).length : 0) + 1;
+                        updatePath = `takeawaySelections.${nextTakeawayNum}.${currentDayName}`;
+                    } else { // This case happens when adding a meal to an existing record that had "ninguna" for today
+                        updatePath = `mainSelection.${currentDayName}`;
+                    }
+                    await updateDoc(docRef, { [updatePath]: selectedOption });
+                } else { // No selection for the week, create a new one
+                    const newSelection = {
+                        employeeId,
+                        employeeName,
+                        weekStart: weekKey,
+                        mainSelection: {},
+                        takeawaySelections: {}
+                    };
+                    days.slice(1,6).forEach(d => newSelection.mainSelection[d] = 'ninguna');
+                    newSelection.mainSelection[currentDayName] = selectedOption;
+                    await setDoc(docRef, newSelection);
+                }
+                showNotification("Comida agregada con éxito.");
+                document.getElementById('add-meal-modal').classList.add('hidden');
+                searchEmployee(); // Refresh the view
+            } catch (error) {
+                console.error("Error adding meal:", error);
+                showNotification("Hubo un error al agregar la comida.", true);
+            }
+        }
+
+
+        async function handleDeliveryAction(event) {
+            const button = event.target;
+            const { selectionId, day, type, number } = button.dataset;
+            const isDelivered = button.dataset.delivered === 'true';
+            
+            button.disabled = true;
+            button.textContent = '...';
+
+            const newStatus = isDelivered ? deleteField() : 'delivered';
+            const docRef = doc(db, "selections", selectionId);
+            let statusKey;
+            if (type === 'main') {
+                statusKey = `status.${day}.main`;
+            } else {
+                statusKey = `status.${day}.takeaway_${number}`;
+            }
+
+            try {
+                const updateData = {};
+                updateData[statusKey] = newStatus;
+                await updateDoc(docRef, updateData);
+                
+                button.dataset.delivered = String(!isDelivered);
+                button.textContent = isDelivered ? 'ENTREGAR' : 'REVERTIR';
+                
+                button.classList.toggle('bg-green-600', isDelivered);
+                button.classList.toggle('hover:bg-green-700', isDelivered);
+                button.classList.toggle('bg-yellow-500', !isDelivered);
+                button.classList.toggle('hover:bg-yellow-600', !isDelivered);
+                
+                button.parentElement.classList.toggle('bg-blue-50', isDelivered);
+                button.parentElement.classList.toggle('bg-green-100', !isDelivered);
+                
+                button.disabled = false;
+                showNotification(`Entrega ${isDelivered ? 'revertida' : 'marcada'} con éxito.`);
+
+            } catch (error) {
+                console.error("Error updating status: ", error);
+                showNotification("Hubo un error al actualizar el estado.", true);
+                button.disabled = false;
+                button.textContent = isDelivered ? 'REVERTIR' : 'ENTREGAR';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const firebaseConfig = {
+              apiKey: "AIzaSyBRl9cy-k0MfXOz3-StMr497YwCLQT8il0",
+              authDomain: "ceunico.firebaseapp.com",
+              databaseURL: "https://ceunico.firebaseio.com",
+              projectId: "ceunico",
+              storageBucket: "ceunico.firebasestorage.app",
+              messagingSenderId: "750486055882",
+              appId: "1:750486055882:web:f270aa8cbddcbcd0d37d33"
+            };
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            currentWeekDates = getWeekDates(new Date());
+            
+            let deliveryDayIndex = new Date().getDay();
+            if (deliveryDayIndex === 0 || deliveryDayIndex === 6) { 
+                deliveryDayIndex = 1; 
+            }
+            currentDayName = days[deliveryDayIndex];
+            
+            document.getElementById('current-day-display').textContent = `Mostrando menú para el día: ${currentDayName}`;
+
+            try {
+                await signInAnonymously(auth);
+            } catch (error) {
+                console.error("Authentication Error:", error);
+                showNotification("Error de autenticación. Verifica la configuración.", true);
+            }
+            
+            document.getElementById('search-button').addEventListener('click', searchEmployee);
+            document.getElementById('search-employee-id').addEventListener('keydown', (event) => {
+                 if (event.key === 'Enter') {
+                    event.preventDefault();
+                    searchEmployee();
+                }
+            });
+             document.getElementById('logout-button').addEventListener('click', () => window.location.reload());
+             document.getElementById('cancel-add-meal-btn').addEventListener('click', () => {
+                document.getElementById('add-meal-modal').classList.add('hidden');
+             });
+        });
+    </script>
+</body>
+</html>
+

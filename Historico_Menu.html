@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Histórico de Menús</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Librería para exportar a Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .modal-overlay { transition: opacity 0.3s ease-in-out; }
+        .loader { border-top-color: #3498db; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .notification { transition: opacity 0.5s, transform 0.5s; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- MODAL DE INICIO DE SESIÓN -->
+    <div id="login-modal" class="modal-overlay fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
+            <img src="https://downloads.puertocoatzacoalcos.com.mx/imagenes/LOGOASPN.png" alt="Logo ASIPONA" class="h-16 mx-auto mb-6">
+            <h2 class="text-2xl font-bold mb-4">Acceso de Administrador</h2>
+            <p class="text-gray-600 mb-6">Introduce tu número de empleado para continuar.</p>
+            <input type="text" id="employee-id-input" placeholder="Número de empleado" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4">
+            <button id="login-button" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700">Continuar</button>
+            <p id="login-error" class="text-red-500 text-sm mt-2 h-auto"></p>
+        </div>
+    </div>
+    
+    <div class="hidden" id="admin-panel">
+        <header class="bg-white shadow-md">
+            <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center py-4">
+                    <div class="flex items-center space-x-4">
+                        <img src="https://downloads.puertocoatzacoalcos.com.mx/imagenes/LOGOASPN.png" alt="Logo ASIPONA" class="h-12">
+                        <h1 class="text-2xl font-bold text-gray-900">Panel de Control</h1>
+                    </div>
+                    <div>
+                        <span id="welcome-message" class="text-gray-700 mr-4"></span>
+                        <button id="logout-button" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600">Salir</button>
+                    </div>
+                </div>
+                 <nav class="flex space-x-4 border-t pt-2">
+                    <a href="./Principal_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Principal</a>
+                    <a href="./Monitor_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Monitorización</a>
+                    <a href="./Historico_Menu.html" class="py-2 px-3 bg-blue-100 text-blue-700 rounded-md font-semibold">Histórico</a>
+                    <a href="./Seleccion_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Seleccionar Menú</a>
+                    <a href="./Visualizar_Menu.html" class="py-2 px-3 text-gray-600 hover:bg-gray-100 rounded-md">Visualizar Menú</a>
+                </nav>
+            </div>
+        </header>
+
+        <main class="container mx-auto p-4 sm:p-6 lg:p-8">
+            <section id="history-section" class="bg-white p-6 rounded-2xl shadow-lg">
+                <div class="flex flex-wrap justify-between items-center mb-6 gap-4">
+                    <div>
+                        <h2 class="text-2xl font-semibold">Histórico de Selecciones</h2>
+                        <p class="text-gray-500">Selecciona una fecha para ver los pedidos de esa semana.</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <input type="date" id="week-selector" class="px-4 py-2 border rounded-lg">
+                        <button id="search-history-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700">Buscar</button>
+                    </div>
+                </div>
+                
+                <div id="history-results" class="hidden">
+                    <div class="flex flex-wrap justify-between items-center mb-4 gap-4">
+                        <p class="font-semibold text-lg" id="history-week-range"></p>
+                        <div class="flex items-center space-x-2">
+                            <button id="export-summary-button" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 text-sm">Descargar Resumen de Pagos</button>
+                            <button id="export-excel-button" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 text-sm">Descargar Reporte Detallado</button>
+                        </div>
+                    </div>
+                    <div id="history-content" class="overflow-x-auto"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <!-- Contenedor para notificaciones -->
+    <div id="notification-container" class="fixed bottom-5 right-5 z-50 space-y-2"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, getDocs, collection, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        let db, auth, userId, employeeData, selectedWeek;
+        const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+        const subsidizedPrice = 30;
+        const regularPrice = 80;
+        const subsidizedLimit = 5;
+        
+        function getWeekDates(date) {
+            const current = new Date(date);
+            const day = current.getDay();
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            const monday = new Date(current.setDate(current.getDate() + diffToMonday));
+            monday.setHours(0, 0, 0, 0);
+            return { start: monday };
+        }
+        function formatDateRange(start) {
+            const end = new Date(start);
+            end.setDate(start.getDate() + 4);
+            return `Del ${start.toLocaleDateString('es-MX', {day: 'numeric', month: 'long'})} al ${end.toLocaleDateString('es-MX', {day: 'numeric', month: 'long', year: 'numeric'})}`;
+        }
+        function formatDateForKey(date) { return date.toISOString().split('T')[0]; }
+
+        function showNotification(message, isError = false) {
+            const container = document.getElementById('notification-container');
+            const notification = document.createElement('div');
+            notification.className = `notification p-4 rounded-lg shadow-lg text-white ${isError ? 'bg-red-500' : 'bg-green-500'} transform translate-y-2 opacity-0`;
+            notification.textContent = message;
+            container.appendChild(notification);
+            
+            requestAnimationFrame(() => {
+                notification.classList.remove('translate-y-2', 'opacity-0');
+            });
+
+            setTimeout(() => {
+                notification.classList.add('opacity-0');
+                notification.addEventListener('transitionend', () => notification.remove());
+            }, 3000);
+        }
+
+        function logout() {
+            localStorage.removeItem('menuAppUser');
+            window.location.reload();
+        }
+
+        async function validateEmployee(id) {
+            const docRef = doc(db, 'employees', id);
+            const docSnap = await getDoc(docRef);
+            return docSnap.exists() ? { ...docSnap.data(), employeeId: id } : null;
+        }
+        
+        function calculateCost(selection) {
+            let totalMeals = 0;
+            if (selection.mainSelection) totalMeals += Object.values(selection.mainSelection).filter(sel => sel !== 'ninguna').length;
+            if (selection.takeawaySelections) {
+                Object.values(selection.takeawaySelections).forEach(takeaway => {
+                    totalMeals += Object.values(takeaway).filter(sel => sel !== 'ninguna').length;
+                });
+            }
+            if (totalMeals <= subsidizedLimit) return totalMeals * subsidizedPrice;
+            return (subsidizedLimit * subsidizedPrice) + ((totalMeals - subsidizedLimit) * regularPrice);
+        }
+
+        async function searchHistory() {
+            const dateInput = document.getElementById('week-selector').value;
+            if (!dateInput) {
+                showNotification("Por favor, selecciona una fecha.", true);
+                return;
+            }
+            
+            selectedWeek = getWeekDates(new Date(dateInput + 'T00:00:00')); // Ensure correct timezone
+            document.getElementById('history-results').classList.remove('hidden');
+            document.getElementById('history-week-range').textContent = `Resultados para la semana: ${formatDateRange(selectedWeek.start)}`;
+            
+            const container = document.getElementById('history-content');
+            container.innerHTML = `<div class="flex justify-center items-center"><div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div></div>`;
+
+            const menuWeekKey = formatDateForKey(selectedWeek.start);
+            const menuDoc = await getDoc(doc(db, "menus", menuWeekKey));
+            const menuData = menuDoc.exists() ? menuDoc.data().menu : {};
+            
+            const selectionsQuery = query(collection(db, "selections"), where("weekStart", "==", menuWeekKey));
+            const querySnapshot = await getDocs(selectionsQuery);
+
+            let tableHtml = `<table class="min-w-full bg-white"><thead><tr class="w-full bg-gray-100 text-gray-600 uppercase text-sm leading-normal">
+                <th class="py-3 px-6 text-left">Empleado</th>`;
+            tableHtml += days.map(day => `<th class="py-3 px-6 text-center">${day}</th>`).join('');
+            tableHtml += `<th class="py-3 px-6 text-center">Costo Total</th></tr></thead><tbody class="text-gray-600 text-sm">`;
+
+            if (querySnapshot.empty) {
+                tableHtml += `<tr><td colspan="${days.length + 2}" class="py-3 px-6 text-center">No se encontraron selecciones para esta semana.</td></tr>`;
+            } else {
+                querySnapshot.forEach(docSnap => {
+                    const selection = docSnap.data();
+                    const cost = calculateCost(selection);
+                    tableHtml += `<tr class="border-b border-gray-200 hover:bg-gray-100 odd:bg-white even:bg-gray-50">
+                        <td class="py-3 px-6 text-left whitespace-nowrap font-medium">${selection.employeeName || ''} (${selection.employeeId})</td>`;
+                    
+                    days.forEach(day => {
+                        let cellHtml = '';
+                        if (selection.mainSelection) {
+                            const mainSel = selection.mainSelection[day];
+                            if(mainSel === 'ninguna') cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Ninguna</div>`;
+                            else if (mainSel) cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${selection.status?.[day]?.main === 'delivered' ? 'bg-green-200' : 'bg-blue-100'}">${menuData[day]?.[mainSel]?.fuerte || 'N/A'}</div>`;
+                        }
+                        if (selection.takeawaySelections) {
+                            Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
+                                const takeawaySel = selData[day];
+                                if(takeawaySel === 'ninguna') cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Llevar #${num}: Ninguna</div>`;
+                                else if(takeawaySel) cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${selection.status?.[day]?.[`takeaway_${num}`] === 'delivered' ? 'bg-green-200' : 'bg-yellow-100'}">Llevar #${num}: ${menuData[day]?.[takeawaySel]?.fuerte || 'N/A'}</div>`;
+                            });
+                        }
+                        tableHtml += `<td class="py-3 px-6 text-center align-top">${cellHtml || ''}</td>`;
+                    });
+                    tableHtml += `<td class="py-3 px-6 text-center font-semibold align-top">$${cost.toFixed(2)}</td></tr>`;
+                });
+            }
+            tableHtml += `</tbody></table>`;
+            container.innerHTML = tableHtml;
+        }
+        
+        async function exportHistoryReport(detailed = true) {
+            if (!selectedWeek) {
+                showNotification("Primero busca una semana para exportar.", true);
+                return;
+            }
+            const weekKey = formatDateForKey(selectedWeek.start);
+            const menuDoc = await getDoc(doc(db, "menus", weekKey));
+            const menuData = menuDoc.exists() ? menuDoc.data().menu : {};
+            const selectionsQuery = query(collection(db, "selections"), where("weekStart", "==", weekKey));
+            const querySnapshot = await getDocs(selectionsQuery);
+
+            if (querySnapshot.empty) {
+                showNotification("No hay datos para exportar en la semana seleccionada.", true);
+                return;
+            }
+
+            if (detailed) {
+                const excelRows = [];
+                querySnapshot.forEach(docSnap => {
+                    const selection = docSnap.data();
+                    const mainRow = {"NÚMERO DE EMPLEADO": selection.employeeId, "NOMBRE": selection.employeeName};
+                    days.forEach(day => mainRow[day.toUpperCase()] = (selection.mainSelection?.[day] && selection.mainSelection[day] !== 'ninguna') ? (menuData[day]?.[selection.mainSelection[day]]?.fuerte || 'N/A') : 'Ninguna');
+                    excelRows.push(mainRow);
+                    if (selection.takeawaySelections) {
+                        Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
+                            const takeawayRow = {"NÚMERO DE EMPLEADO": selection.employeeId, "NOMBRE": `${selection.employeeName} (Llevar #${num})`};
+                            days.forEach(day => takeawayRow[day.toUpperCase()] = (selData[day] && selData[day] !== 'ninguna') ? (menuData[day]?.[selData[day]]?.fuerte || 'N/A') : 'Ninguna');
+                            excelRows.push(takeawayRow);
+                        });
+                    }
+                });
+                const ws = XLSX.utils.json_to_sheet(excelRows, {header: ["NÚMERO DE EMPLEADO", "NOMBRE", "LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES"]});
+                const greenFill = { patternType: "solid", fgColor: { rgb: "C6EFCE" } };
+                excelRows.forEach((row, rowIndex) => {
+                    const selection = querySnapshot.docs.map(d => d.data()).find(s => s.employeeId === row["NÚMERO DE EMPLEADO"]);
+                    if (selection && selection.status) {
+                        days.forEach((day, dayIndex) => {
+                            const cellAddress = XLSX.utils.encode_cell({c: dayIndex + 2, r: rowIndex + 1});
+                            if (!ws[cellAddress]) return;
+                            let isDelivered = false;
+                            if (row["NOMBRE"].includes("Llevar")) {
+                                const match = row["NOMBRE"].match(/Llevar #(\d+)/);
+                                if (match && selection.status[day]?.[`takeaway_${match[1]}`] === 'delivered') isDelivered = true;
+                            } else if (selection.status[day]?.main === 'delivered') isDelivered = true;
+                            if(isDelivered) ws[cellAddress].s = { fill: greenFill };
+                        });
+                    }
+                });
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Reporte Histórico");
+                XLSX.writeFile(wb, `Reporte_Detallado_Historico_${weekKey}.xlsx`);
+            } else {
+                const excelData = [];
+                querySnapshot.forEach(docSnap => {
+                    const selection = docSnap.data();
+                    excelData.push({"NÚMERO DE EMPLEADO": selection.employeeId, "NOMBRE": selection.employeeName, "MONTO A PAGAR": calculateCost(selection)});
+                });
+                const ws = XLSX.utils.json_to_sheet(excelData);
+                Object.keys(ws).forEach(key => { if(key.startsWith('C') && ws[key].v && typeof ws[key].v === 'number') ws[key].z = '"$"#,##0.00' });
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Resumen de Pagos");
+                XLSX.writeFile(wb, `Resumen_Pagos_Historico_${weekKey}.xlsx`);
+            }
+        }
+
+        function setupEventListeners() {
+            const employeeInput = document.getElementById('employee-id-input');
+            const loginButton = document.getElementById('login-button');
+            const performLogin = async () => {
+                const errorEl = document.getElementById('login-error');
+                const enteredId = employeeInput.value.trim();
+                if (!enteredId) { errorEl.textContent = 'Ingrese un número.'; return; }
+                const data = await validateEmployee(enteredId);
+                if (data && data.isAdmin) {
+                    employeeData = data;
+                    localStorage.setItem('menuAppUser', JSON.stringify(employeeData));
+                    document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
+                    document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
+                    document.getElementById('admin-panel').classList.remove('hidden');
+                } else {
+                    errorEl.textContent = 'Acceso denegado. No eres administrador.';
+                }
+            };
+            loginButton.addEventListener('click', performLogin);
+            employeeInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); performLogin(); } });
+            document.getElementById('logout-button').addEventListener('click', logout);
+            document.getElementById('search-history-btn').addEventListener('click', searchHistory);
+            document.getElementById('export-excel-button').addEventListener('click', () => exportHistoryReport(true));
+            document.getElementById('export-summary-button').addEventListener('click', () => exportHistoryReport(false));
+        }
+        
+        document.addEventListener('DOMContentLoaded', async () => {
+             const firebaseConfig = {
+              apiKey: "AIzaSyBRl9cy-k0MfXOz3-StMr497YwCLQT8il0",
+              authDomain: "ceunico.firebaseapp.com",
+              databaseURL: "https://ceunico.firebaseio.com",
+              projectId: "ceunico",
+              storageBucket: "ceunico.firebasestorage.app",
+              messagingSenderId: "750486055882",
+              appId: "1:750486055882:web:f270aa8cbddcbcd0d37d33"
+            };
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            onAuthStateChanged(auth, user => {
+                if (user) {
+                    userId = user.uid;
+                    const storedUserJSON = localStorage.getItem('menuAppUser');
+                    if(storedUserJSON) {
+                        const storedUser = JSON.parse(storedUserJSON);
+                        if (storedUser && storedUser.isAdmin) {
+                            employeeData = storedUser;
+                            document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
+                            document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
+                            document.getElementById('admin-panel').classList.remove('hidden');
+                        }
+                    }
+                }
+            });
+
+            try {
+                await signInAnonymously(auth);
+            } catch (error) {
+                console.error("Authentication Error:", error);
+                if (error.code === 'auth/admin-restricted-operation') {
+                    document.getElementById('login-error').innerHTML = `<b>Error:</b> Activa el "Inicio de sesión anónimo" en tu consola de Firebase.`;
+                }
+            }
+            
+            setupEventListeners();
+        });
+    </script>
+</body>
+</html>
+

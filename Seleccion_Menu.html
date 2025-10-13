@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Selección de Menú</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .modal-overlay, .view { transition: opacity 0.3s ease-in-out; }
+        .loader { border-top-color: #3498db; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        /* Estilos para los radio buttons personalizados */
+        .radio-option input[type="radio"] { display: none; }
+        .radio-option label {
+            display: block;
+            padding: 1rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        .radio-option input[type="radio"]:checked + label {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- MODAL DE INICIO DE SESIÓN -->
+    <div id="login-modal" class="modal-overlay fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
+            <img src="https://downloads.puertocoatzacoalcos.com.mx/imagenes/LOGOASPN.png" alt="Logo ASIPONA" class="h-16 mx-auto mb-6">
+            <h2 class="text-2xl font-bold mb-4">Bienvenido</h2>
+            <p class="text-gray-600 mb-6">Introduce tu número de empleado para seleccionar tu menú.</p>
+            <input type="text" id="employee-id-input" placeholder="Número de empleado" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4">
+            <button id="login-button" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700">Continuar</button>
+            <p id="login-error" class="text-red-500 text-sm mt-2 h-auto"></p>
+        </div>
+    </div>
+
+    <!-- MODAL PARA MENÚ PARA LLEVAR INICIAL -->
+    <div id="initial-takeaway-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center">
+            <h2 class="text-2xl font-bold mb-4">Menú para Llevar</h2>
+            <p class="text-gray-600 mb-6">¿Deseas agregar tu primer menú para llevar?</p>
+            <div class="flex justify-center space-x-4">
+                <button id="add-first-takeaway-btn" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Sí, agregar</button>
+                <button id="no-takeaway-btn" class="bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg hover:bg-gray-400">No, gracias</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="hidden" id="app-container">
+        <header class="bg-white shadow-md">
+            <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center py-4">
+                     <div class="flex items-center space-x-4">
+                        <img src="https://downloads.puertocoatzacoalcos.com.mx/imagenes/LOGOASPN.png" alt="Logo ASIPONA" class="h-12">
+                        <h1 class="text-2xl font-bold text-gray-900">Seleccionar Menú</h1>
+                    </div>
+                    <div>
+                        <span id="welcome-message" class="text-gray-700 mr-4"></span>
+                        <button id="logout-button" class="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600">Salir</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <main id="main-content" class="view container mx-auto p-4 sm:p-6 lg:p-8">
+            <!-- El contenido se generará aquí -->
+        </main>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        let db, auth, userId, employeeData, nextWeekDates, autoLogoutTimer;
+        const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+
+        function getWeekDates(date) {
+            const current = new Date(date);
+            const day = current.getDay();
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            const monday = new Date(current.setDate(current.getDate() + diffToMonday));
+            monday.setHours(0, 0, 0, 0);
+            return { start: monday };
+        }
+        function formatDateRange(start) {
+            const end = new Date(start);
+            end.setDate(start.getDate() + 4);
+            return `Del ${start.toLocaleDateString('es-MX', {day: 'numeric', month: 'long'})} al ${end.toLocaleDateString('es-MX', {day: 'numeric', month: 'long', year: 'numeric'})}`;
+        }
+        function formatDateForKey(date) { return date.toISOString().split('T')[0]; }
+
+        function logout() {
+            if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
+            localStorage.removeItem('menuAppUser');
+            window.location.reload();
+        }
+
+        async function validateEmployee(id) {
+            const docRef = doc(db, 'employees', id);
+            const docSnap = await getDoc(docRef);
+            return docSnap.exists() ? { ...docSnap.data(), employeeId: id } : null;
+        }
+
+        async function initializeUserView() {
+            const selectionData = await loadFullSelectionData(nextWeekDates.start, employeeData.employeeId);
+            if (selectionData && selectionData.mainSelection) {
+                renderSelectionSummary();
+            } else {
+                renderSelectionView({ isTakeaway: false });
+            }
+        }
+
+        async function renderSelectionView({ isTakeaway = false, takeawayNumber = 1 }) {
+            const mainContent = document.getElementById('main-content');
+            if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
+
+            if (!employeeData || !employeeData.employeeId) {
+                console.error("Datos de empleado incompletos, forzando nuevo inicio de sesión.");
+                logout(); return;
+            }
+            
+            const settingsDoc = await getDoc(doc(db, 'settings', 'app-settings'));
+            const settings = settingsDoc.exists() ? settingsDoc.data() : { isOrderingOpen: false };
+            
+            const now = new Date();
+            const dayOfWeek = now.getDay(); // 0 = Sunday, 5 = Friday
+            const hour = now.getHours();
+            
+            const isSelectionPeriodOver = (dayOfWeek === 5 && hour >= 17) || dayOfWeek === 6 || dayOfWeek === 0;
+
+            if (!settings.isOrderingOpen || isSelectionPeriodOver) {
+                mainContent.innerHTML = `<div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-lg shadow-md" role="alert"><p class="font-bold">Pedidos Cerrados</p><p>La selección de menú no está disponible en este momento.</p></div>`;
+                return;
+            }
+
+            const menu = await loadMenuData(nextWeekDates.start);
+            if (!menu) {
+                mainContent.innerHTML = `<div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-lg shadow-md" role="alert"><p class="font-bold">Menú no Disponible</p><p>El menú para la próxima semana aún no ha sido publicado.</p></div>`;
+                return;
+            }
+
+            const selectionData = await loadFullSelectionData(nextWeekDates.start, employeeData.employeeId);
+            const currentSelection = isTakeaway ? (selectionData?.takeawaySelections?.[takeawayNumber] || {}) : (selectionData?.mainSelection || {});
+            
+            const title = isTakeaway ? `Elige tu menú PARA LLEVAR #${takeawayNumber}` : "Elige tu menú para la semana";
+            const buttonText = "Guardar Selección";
+
+            mainContent.innerHTML = `
+                <div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-1">${title}</h2>
+                    <p class="text-gray-500 mb-6">${formatDateRange(nextWeekDates.start)}</p>
+                    <div id="selection-form" class="space-y-8"></div>
+                    <div class="mt-8 flex items-center space-x-4">
+                        <button id="save-selection-button" data-istakeaway="${isTakeaway}" data-takeaway-number="${takeawayNumber}" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 disabled:bg-gray-400">${buttonText}</button>
+                        ${isTakeaway ? '<button id="cancel-takeaway-button" class="bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg hover:bg-gray-400">Cancelar</button>' : ''}
+                        <p id="save-selection-feedback" class="font-semibold h-5"></p>
+                    </div>
+                </div>
+            `;
+            
+            const formContainer = document.getElementById('selection-form');
+            days.forEach(day => {
+                const dayMenu = menu[day] || { opcion1: {fuerte: 'No definido'}, opcion2: {fuerte: 'No definido'}};
+                const selectedOption = currentSelection[day] || 'ninguna';
+                
+                const fieldset = document.createElement('fieldset');
+                fieldset.className = 'border p-4 rounded-lg';
+                fieldset.innerHTML = `<legend class="font-bold px-2 text-lg">${day}</legend><div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+                    ${createRadioOption(day, 'opcion1', dayMenu.opcion1, selectedOption)}
+                    ${createRadioOption(day, 'opcion2', dayMenu.opcion2, selectedOption)}
+                    ${createRadioOption(day, 'ninguna', {fuerte: 'No deseo comer este día'}, selectedOption)}
+                </div>`;
+                formContainer.appendChild(fieldset);
+            });
+            
+            document.getElementById('save-selection-button').addEventListener('click', saveSelection);
+            if(isTakeaway) {
+                document.getElementById('cancel-takeaway-button').addEventListener('click', renderSelectionSummary);
+            }
+        }
+        
+        async function renderSelectionSummary() {
+            const mainContent = document.getElementById('main-content');
+            mainContent.innerHTML = '<div class="flex justify-center items-center"><div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div></div>';
+
+            const menu = await loadMenuData(nextWeekDates.start);
+            const selectionData = await loadFullSelectionData(nextWeekDates.start, employeeData.employeeId);
+            const { mainSelection, takeawaySelections } = selectionData || {};
+
+            let summaryHtml = `<div class="bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-semibold mb-1">Tu Selección Ha Sido Guardada</h2>
+                <p class="text-gray-500 mb-6">Resumen para la semana ${formatDateRange(nextWeekDates.start)}</p>`;
+
+            if (mainSelection) {
+                summaryHtml += `<div class="mb-8"><h3 class="text-xl font-bold mb-4 text-blue-700">Tu Menú Semanal (Principal)</h3><div class="space-y-4">`;
+                days.forEach(day => {
+                    const selection = mainSelection[day] || 'ninguna';
+                    const selectionText = (selection !== 'ninguna') 
+                        ? `<b>${menu[day]?.[selection]?.fuerte || 'No definido'}</b>`
+                        : '<b>Ninguna</b>';
+                    summaryHtml += `<div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><span class="font-semibold">${day}</span><span class="text-right">${selectionText}</span></div>`;
+                });
+                summaryHtml += `</div></div>`;
+            }
+
+            if (takeawaySelections) {
+                Object.entries(takeawaySelections).sort(([a], [b]) => a - b).forEach(([number, selections]) => {
+                    summaryHtml += `<div><h3 class="text-xl font-bold mb-4 text-green-700">Tu Menú para Llevar #${number}</h3><div class="space-y-4">`;
+                    days.forEach(day => {
+                        const selection = selections[day] || 'ninguna';
+                        const selectionText = (selection !== 'ninguna') 
+                            ? `<b>${menu[day]?.[selection]?.fuerte || 'No definido'}</b>`
+                            : '<b>Ninguna</b>';
+                        summaryHtml += `<div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><span class="font-semibold">${day}</span><span class="text-right">${selectionText}</span></div>`;
+                    });
+                    summaryHtml += `</div></div><div class="my-8"></div>`;
+                });
+            }
+
+            const nextTakeawayNumber = takeawaySelections ? Object.keys(takeawaySelections).length + 1 : 1;
+            summaryHtml += `
+                <div class="mt-8 text-center border-t pt-6 space-y-4">
+                    <button id="add-another-takeaway-btn" data-next-number="${nextTakeawayNumber}" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">Agregar Otro Menú para Llevar</button>
+                    <div>
+                        <p class="text-sm text-gray-500 mb-2">Tu sesión se cerrará automáticamente en 30 segundos.</p>
+                        <button id="close-summary-btn" class="bg-gray-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-gray-600">Cerrar Sesión Ahora</button>
+                    </div>
+                </div>
+            </div>`;
+            mainContent.innerHTML = summaryHtml;
+            
+            document.getElementById('add-another-takeaway-btn').addEventListener('click', (e) => {
+                if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
+                const nextNumber = e.target.dataset.nextNumber;
+                renderSelectionView({ isTakeaway: true, takeawayNumber: nextNumber });
+            });
+            document.getElementById('close-summary-btn').addEventListener('click', logout);
+            autoLogoutTimer = setTimeout(logout, 30000);
+        }
+
+        function createRadioOption(day, value, data, currentSelection) {
+            const isChecked = value === currentSelection ? 'checked' : '';
+            return `<div class="radio-option">
+                <input type="radio" id="${day}-${value}" name="${day}" value="${value}" ${isChecked}>
+                <label for="${day}-${value}">
+                    <h4 class="font-bold text-lg">${value.startsWith('opcion') ? `Opción ${value.slice(-1)}` : 'Ninguna'}</h4>
+                    <p class="text-gray-600">${data?.fuerte || 'No definido'}</p>
+                </label>
+            </div>`;
+        }
+
+        async function saveSelection(event) {
+            const saveButton = event.target;
+            const isTakeaway = saveButton.dataset.istakeaway === 'true';
+            const takeawayNumber = saveButton.dataset.takeawayNumber;
+            const feedbackEl = document.getElementById('save-selection-feedback');
+
+            saveButton.disabled = true;
+            saveButton.textContent = 'Guardando...';
+            feedbackEl.textContent = '';
+            
+            const selections = {};
+            days.forEach(day => {
+                const selected = document.querySelector(`input[name="${day}"]:checked`);
+                selections[day] = selected ? selected.value : 'ninguna';
+            });
+
+            const weekKey = formatDateForKey(nextWeekDates.start);
+            const selectionId = `${weekKey}_${employeeData.employeeId}`;
+            const docRef = doc(db, 'selections', selectionId);
+
+            try {
+                if (isTakeaway) {
+                    const updateData = {};
+                    updateData[`takeawaySelections.${takeawayNumber}`] = selections;
+                    await updateDoc(docRef, updateData);
+                } else {
+                    const dataToSave = { 
+                        employeeId: employeeData.employeeId,
+                        employeeName: employeeData.name,
+                        weekStart: weekKey,
+                        mainSelection: selections,
+                        takeawaySelections: {}
+                    };
+                    await setDoc(docRef, dataToSave, { merge: true });
+                }
+
+                feedbackEl.textContent = '¡Guardado con éxito!';
+                feedbackEl.style.color = '#16a34a';
+
+                if (!isTakeaway) {
+                    document.getElementById('initial-takeaway-modal').classList.remove('hidden');
+                } else {
+                    setTimeout(renderSelectionSummary, 1500);
+                }
+
+            } catch(error) {
+                console.error("Error saving selection: ", error);
+                feedbackEl.textContent = 'Error al guardar.';
+                feedbackEl.style.color = '#dc2626';
+                saveButton.disabled = false;
+                saveButton.textContent = 'Guardar Selección';
+                setTimeout(() => { feedbackEl.textContent = '' }, 3000);
+            }
+        }
+
+        async function loadMenuData(weekStart) {
+            const weekKey = formatDateForKey(weekStart);
+            const docRef = doc(db, 'menus', weekKey);
+            const docSnap = await getDoc(docRef);
+            return docSnap.exists() ? docSnap.data().menu : null;
+        }
+
+        async function loadFullSelectionData(weekStart, employeeId) {
+            const weekKey = formatDateForKey(weekStart);
+            const selectionId = `${weekKey}_${employeeId}`;
+            const docRef = doc(db, 'selections', selectionId);
+            const docSnap = await getDoc(docRef);
+            return docSnap.exists() ? docSnap.data() : null;
+        }
+
+        function setupEventListeners() {
+            const employeeInput = document.getElementById('employee-id-input');
+            const loginButton = document.getElementById('login-button');
+
+            const performLogin = async () => {
+                const errorEl = document.getElementById('login-error');
+                const enteredId = employeeInput.value.trim();
+                if (!enteredId) { errorEl.textContent = 'Ingrese un número.'; return; }
+                const data = await validateEmployee(enteredId);
+                if (data) {
+                    employeeData = data;
+                    localStorage.setItem('menuAppUser', JSON.stringify(employeeData));
+                    document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
+                    document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
+                    document.getElementById('app-container').classList.remove('hidden');
+                    initializeUserView();
+                } else {
+                    errorEl.textContent = 'Número de empleado no válido.';
+                }
+            };
+
+            loginButton.addEventListener('click', performLogin);
+            
+            employeeInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    performLogin();
+                }
+            });
+
+            document.getElementById('logout-button').addEventListener('click', logout);
+            document.getElementById('no-takeaway-btn').addEventListener('click', () => {
+                 document.getElementById('initial-takeaway-modal').classList.add('hidden');
+                 renderSelectionSummary();
+            });
+            document.getElementById('add-first-takeaway-btn').addEventListener('click', () => {
+                document.getElementById('initial-takeaway-modal').classList.add('hidden');
+                renderSelectionView({ isTakeaway: true, takeawayNumber: 1 });
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', async () => {
+            const firebaseConfig = {
+              apiKey: "AIzaSyBRl9cy-k0MfXOz3-StMr497YwCLQT8il0",
+              authDomain: "ceunico.firebaseapp.com",
+              databaseURL: "https://ceunico.firebaseio.com",
+              projectId: "ceunico",
+              storageBucket: "ceunico.firebasestorage.app",
+              messagingSenderId: "750486055882",
+              appId: "1:750486055882:web:f270aa8cbddcbcd0d37d33"
+            };
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            const nextWeekDate = new Date();
+            nextWeekDate.setDate(new Date().getDate() + 7);
+            nextWeekDates = getWeekDates(nextWeekDate);
+
+            onAuthStateChanged(auth, async user => {
+                if (user) {
+                    userId = user.uid;
+                    const storedUserJSON = localStorage.getItem('menuAppUser');
+                    if(storedUserJSON) {
+                        const storedUser = JSON.parse(storedUserJSON);
+                        if (storedUser && storedUser.employeeId) {
+                            employeeData = storedUser;
+                            document.getElementById('welcome-message').textContent = `Hola, ${employeeData.name}`;
+                            document.getElementById('login-modal').classList.add('opacity-0', 'pointer-events-none');
+                            document.getElementById('app-container').classList.remove('hidden');
+                            initializeUserView();
+                        } else {
+                            localStorage.removeItem('menuAppUser');
+                        }
+                    }
+                }
+            });
+
+            try {
+                await signInAnonymously(auth);
+            } catch (error) {
+                console.error("Authentication Error:", error);
+                if (error.code === 'auth/admin-restricted-operation') {
+                    const loginError = document.getElementById('login-error');
+                    if (loginError) {
+                         loginError.innerHTML = `<b>Error de Configuración:</b> Activa el "Inicio de sesión anónimo" en tu consola de Firebase -> Authentication -> Sign-in method.`;
+                    }
+                }
+            }
+            
+            setupEventListeners();
+        });
+    </script>
+</body>
+</html>
+
