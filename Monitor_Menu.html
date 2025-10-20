@@ -217,6 +217,7 @@
                 
                 const totals = {};
                 days.forEach(day => totals[day] = {});
+                let grandTotalMeals = 0;
 
                 let tableHtml = `<table class="min-w-full bg-white" id="monitoring-table"><thead><tr class="w-full bg-gray-100 text-gray-600 uppercase text-sm leading-normal">
                     <th class="py-3 px-6 text-left">Empleado</th>`;
@@ -239,26 +240,32 @@
                             
                             if (selection.mainSelection) {
                                 const mainSel = selection.mainSelection[day];
-                                if (mainSel === 'ninguna') {
-                                    cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Ninguna</div>`;
-                                } else if (mainSel) {
+                                if (mainSel && mainSel !== 'ninguna') {
                                     const food = menuData[day]?.[mainSel]?.fuerte || 'N/A';
-                                    if (food !== 'N/A') totals[day][food] = (totals[day][food] || 0) + 1;
+                                    if (food !== 'N/A') {
+                                        totals[day][food] = (totals[day][food] || 0) + 1;
+                                        grandTotalMeals++;
+                                    }
                                     const isDelivered = selection.status?.[day]?.main === 'delivered';
                                     cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${isDelivered ? 'bg-green-200' : 'bg-blue-100'}">${food}</div>`;
+                                } else if (mainSel === 'ninguna') {
+                                     cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Ninguna</div>`;
                                 }
                             }
 
                             if (selection.takeawaySelections) {
                                 Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
                                     const takeawaySel = selData[day];
-                                    if (takeawaySel === 'ninguna') {
-                                        cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Llevar #${num}: Ninguna</div>`;
-                                    } else if (takeawaySel) {
+                                    if (takeawaySel && takeawaySel !== 'ninguna') {
                                         const food = menuData[day]?.[takeawaySel]?.fuerte || 'N/A';
-                                        if (food !== 'N/A') totals[day][food] = (totals[day][food] || 0) + 1;
+                                        if (food !== 'N/A') {
+                                            totals[day][food] = (totals[day][food] || 0) + 1;
+                                            grandTotalMeals++;
+                                        }
                                         const isDelivered = selection.status?.[day]?.[`takeaway_${num}`] === 'delivered';
                                         cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${isDelivered ? 'bg-green-200' : 'bg-yellow-100'}">Llevar #${num}: ${food}</div>`;
+                                    } else if (takeawaySel === 'ninguna') {
+                                         cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Llevar #${num}: Ninguna</div>`;
                                     }
                                 });
                             }
@@ -278,7 +285,18 @@
                 container.innerHTML = tableHtml;
 
                 const totalsSection = document.getElementById('totals-section');
-                let totalsHtml = `<h3 class="text-xl font-semibold mb-2">Total a Preparar</h3><div class="grid grid-cols-1 md:grid-cols-5 gap-4">`;
+                const totalUsers = querySnapshot.size;
+                let totalsHtml = `<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div class="bg-blue-50 p-4 rounded-lg">
+                        <h3 class="text-xl font-semibold text-blue-800">Resumen Semanal</h3>
+                        <p class="text-gray-700 mt-2">Total de Empleados con Pedido: <span class="font-bold text-2xl">${totalUsers}</span></p>
+                    </div>
+                     <div class="bg-green-50 p-4 rounded-lg">
+                        <h3 class="text-xl font-semibold text-green-800">Total de Menús</h3>
+                        <p class="text-gray-700 mt-2">Total de Menús Pedidos: <span class="font-bold text-2xl">${grandTotalMeals}</span></p>
+                    </div>
+                </div>
+                <h3 class="text-xl font-semibold mb-2">Total a Preparar por Día</h3><div class="grid grid-cols-1 md:grid-cols-5 gap-4">`;
                 days.forEach(day => {
                     totalsHtml += `<div class="bg-gray-50 p-3 rounded-lg"><h4 class="font-bold mb-2">${day}</h4><div class="text-sm space-y-1">`;
                     if (Object.keys(totals[day]).length > 0) {
