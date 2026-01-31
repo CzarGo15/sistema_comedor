@@ -32,7 +32,19 @@
 </head>
 <body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
 
-    <div class="bg-white p-6 sm:p-8 rounded-3xl shadow-xl w-full max-w-2xl border border-gray-100 my-8">
+    <!-- PANTALLA DE ENCUESTA CERRADA (Por defecto oculta) -->
+    <div id="closed-screen" class="hidden text-center w-full max-w-md bg-white p-8 rounded-3xl shadow-xl">
+        <div class="mx-auto flex items-center justify-center h-20 w-20 rounded-full bg-gray-100 mb-6">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+        </div>
+        <h2 class="text-2xl font-bold text-gray-800 mb-2">Encuesta no disponible</h2>
+        <p class="text-gray-500">La encuesta de satisfacción está cerrada en este momento. Por favor, inténtalo más tarde.</p>
+    </div>
+
+    <!-- CONTENEDOR PRINCIPAL (Se muestra solo si la encuesta está abierta) -->
+    <div id="main-container" class="bg-white p-6 sm:p-8 rounded-3xl shadow-xl w-full max-w-2xl border border-gray-100 my-8 hidden">
         <!-- HEADER -->
         <div class="text-center mb-8 border-b pb-4 relative">
             <img src="https://downloads.puertocoatzacoalcos.com.mx/imagenes/LOGOASPN.png" alt="Logo" class="h-16 mx-auto mb-4 object-contain">
@@ -123,7 +135,7 @@
                 <div class="flex items-center bg-yellow-50 p-4 rounded-xl border border-yellow-200">
                     <input id="anon-check" type="checkbox" class="w-5 h-5 text-blue-600 bg-white border-gray-300 rounded focus:ring-blue-500 cursor-pointer">
                     <label for="anon-check" class="ml-3 text-sm font-medium text-gray-700 cursor-pointer select-none">
-                        Enviar como <b>Anónimo</b> <br><span class="text-xs text-gray-500 font-normal">Tu nombre no aparecerá en el Encuesta</span>
+                        Enviar como <b>Anónimo</b> <br><span class="text-xs text-gray-500 font-normal">Tu nombre no aparecerá en las respuesta de la encuesta.</span>
                     </label>
                 </div>
 
@@ -151,7 +163,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, addDoc, collection, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
               apiKey: "AIzaSyBRl9cy-k0MfXOz3-StMr497YwCLQT8il0",
@@ -169,6 +181,21 @@
         let currentUserData = null;
 
         signInAnonymously(auth).catch((error) => console.error("Error Auth:", error));
+
+        // --- CONTROL DE ACCESO (ENCUESTA ABIERTA/CERRADA) ---
+        onSnapshot(doc(db, "settings", "app-settings"), (docSnap) => {
+            const isSurveyOpen = docSnap.exists() && docSnap.data().isSurveyOpen;
+            const mainContainer = document.getElementById('main-container');
+            const closedScreen = document.getElementById('closed-screen');
+
+            if (isSurveyOpen) {
+                mainContainer.classList.remove('hidden');
+                closedScreen.classList.add('hidden');
+            } else {
+                mainContainer.classList.add('hidden');
+                closedScreen.classList.remove('hidden');
+            }
+        });
 
         // --- CONFIGURACIÓN DE PREGUNTAS ---
         const options = ["Malo", "Regular", "Bueno", "Superó mis expectativas", "Otros"];
