@@ -118,7 +118,7 @@
                             <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
                             <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Empleado</th>
                             <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider w-1/3">Comentario "Mejora"</th>
-                            <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Detalle</th>
+                            <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="feedback-list">
@@ -336,6 +336,25 @@
             document.getElementById('survey-detail-modal').classList.remove('hidden');
         };
 
+        // Función global para ELIMINAR encuesta
+        window.deleteSurvey = function(surveyId) {
+            if(!surveyId) return;
+            
+            showConfirmation('Eliminar Encuesta', '¿Estás seguro de que quieres eliminar esta encuesta? Esta acción no se puede deshacer.', async () => {
+                try {
+                    await deleteDoc(doc(db, 'surveys_v2', surveyId));
+                    await logAction('Eliminar Encuesta', `Se eliminó la encuesta ID: ${surveyId}`);
+                    showNotification('Encuesta eliminada correctamente.');
+                    
+                    // Recargar la lista (si está abierto el modal)
+                    loadSurveyResults();
+                } catch (error) {
+                    console.error("Error al eliminar encuesta:", error);
+                    showNotification("Hubo un error al eliminar la encuesta.", true);
+                }
+            });
+        };
+
         function getWeekDates(date, weekOffset = 0) {
             const current = new Date(date);
             current.setDate(current.getDate() + (weekOffset * 7));
@@ -492,6 +511,7 @@
                     const survey = doc.data();
                     window.currentSurveys.push(survey); // Push al array global
                     const index = window.currentSurveys.length - 1;
+                    const surveyId = doc.id; // ID del documento para borrar
 
                     const date = survey.timestamp ? survey.timestamp.toDate().toLocaleString('es-MX') : 'Sin fecha';
                     
@@ -528,9 +548,14 @@
                         </td>
                         <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><p class="text-gray-900 text-sm italic">"${mejoraComment}"</p></td>
                         <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">
-                            <button onclick="window.showSurveyDetail(${index})" class="bg-blue-100 text-blue-600 hover:bg-blue-200 font-bold py-1 px-3 rounded text-xs transition">
-                                👁️ Ver Detalle
-                            </button>
+                            <div class="flex items-center justify-center space-x-2">
+                                <button onclick="window.showSurveyDetail(${index})" class="bg-blue-100 text-blue-600 hover:bg-blue-200 font-bold py-1 px-3 rounded text-xs transition" title="Ver Detalle">
+                                    👁️
+                                </button>
+                                <button onclick="window.deleteSurvey('${surveyId}')" class="bg-red-100 text-red-600 hover:bg-red-200 font-bold py-1 px-3 rounded text-xs transition" title="Eliminar Encuesta">
+                                    🗑️
+                                </button>
+                            </div>
                         </td>
                     `;
                     listContainer.appendChild(tr);
