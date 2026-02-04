@@ -8,6 +8,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- Librería para leer archivos de Excel -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Librería para Gráficas -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <style>
         body { font-family: 'Inter', sans-serif; }
         .modal-overlay { transition: opacity 0.3s ease-in-out; }
@@ -64,7 +67,7 @@
         </div>
     </div>
     
-    <!-- MODAL DE CONFIRMACIÓN (Z-INDEX 100) -->
+    <!-- MODAL DE CONFIRMACIÓN (Z-INDEX ALTO) -->
     <div id="confirm-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-[100]">
         <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center">
             <h2 class="text-2xl font-bold mb-4" id="confirm-title"></h2>
@@ -100,6 +103,34 @@
             </div>
             <div class="mt-4 text-right">
                 <button id="close-audit-footer-btn" class="bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg hover:bg-gray-400">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE ESTADÍSTICAS (GRÁFICAS) -->
+    <div id="stats-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 class="text-2xl font-bold text-gray-800">Estadísticas de Satisfacción</h2>
+                <button id="close-stats-btn" class="text-gray-500 hover:text-gray-700 font-bold text-xl">&times;</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-8">
+                <!-- Contenedores de Gráficas -->
+                <div class="bg-white p-4 rounded-xl border shadow-sm">
+                    <h3 class="text-lg font-bold text-gray-700 mb-4 text-center">Desempeño de Alimentos</h3>
+                    <div class="h-80 w-full">
+                        <canvas id="foodChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white p-4 rounded-xl border shadow-sm">
+                    <h3 class="text-lg font-bold text-gray-700 mb-4 text-center">Desempeño del Servicio y Comedor</h3>
+                    <div class="h-80 w-full">
+                        <canvas id="serviceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4 text-right">
+                <button id="close-stats-footer-btn" class="bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg hover:bg-gray-400">Cerrar</button>
             </div>
         </div>
     </div>
@@ -220,7 +251,10 @@
                             <span>📜</span> Ver Historial de Cambios
                         </button>
                         <button id="view-feedback-btn" class="w-full bg-blue-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-600 text-sm flex items-center justify-center gap-2">
-                            <span>📊</span> Ver Resultados de Encuesta
+                            <span>📝</span> Ver Resultados de Encuesta
+                        </button>
+                        <button id="view-stats-btn" class="w-full bg-indigo-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-600 text-sm flex items-center justify-center gap-2">
+                            <span>📊</span> Ver Estadísticas Gráficas
                         </button>
                     </div>
                 </section>
@@ -264,6 +298,8 @@
         import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, deleteDoc, writeBatch, updateDoc, getDocs, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db, auth, userId, employeeData, nextWeekDates;
+        let foodChartInstance = null;
+        let serviceChartInstance = null;
         const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
         
         // Función auxiliar global para ver detalle
@@ -305,9 +341,7 @@
             `;
 
             if (survey.version === 'v1') {
-                // RENDERIZADO PARA ENCUESTA ANTIGUA (Simple)
                 html += `<h4 class="survey-section-title">Resultados (Formato Anterior)</h4>`;
-                
                 if (survey.ratings) {
                     html += `<div class="grid grid-cols-2 gap-2">
                         ${createBlock('Sabor', survey.ratings.flavor ? survey.ratings.flavor + ' ⭐' : '-')}
@@ -315,17 +349,12 @@
                         ${createBlock('Servicio', survey.ratings.service ? survey.ratings.service + ' ⭐' : '-')}
                         ${createBlock('Limpieza', survey.ratings.cleanliness ? survey.ratings.cleanliness + ' ⭐' : '-')}
                     </div>`;
-                } else if (survey.rating) {
-                     html += createBlock('Calificación General', survey.rating + ' ⭐');
                 }
-                
                 html += `<h4 class="survey-section-title">Comentarios</h4>
                          <div class="survey-detail-group">
                             <span class="survey-detail-value italic">"${survey.comment || 'Sin comentarios'}"</span>
                          </div>`;
-
             } else {
-                // RENDERIZADO PARA ENCUESTA NUEVA (Detallada)
                 html += `<h4 class="survey-section-title">1. Alimentos</h4>
                      <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                         ${createBlock('1.1 Sabor', survey['1.1'])}
@@ -359,7 +388,6 @@
             const survey = window.currentSurveys[surveyIndex];
             if(!survey) return;
             
-            // Determinar de qué colección borrar
             const collectionName = survey.version === 'v1' ? 'surveys' : 'surveys_v2';
             
             showConfirmation('Eliminar Encuesta', '¿Estás seguro de que quieres eliminar esta encuesta? Esta acción no se puede deshacer.', async () => {
@@ -367,8 +395,6 @@
                     await deleteDoc(doc(db, collectionName, survey.id));
                     await logAction('Eliminar Encuesta', `Se eliminó la encuesta ID: ${survey.id} (${collectionName})`);
                     showNotification('Encuesta eliminada correctamente.');
-                    
-                    // Recargar la lista
                     loadSurveyResults();
                 } catch (error) {
                     console.error("Error al eliminar encuesta:", error);
@@ -376,6 +402,113 @@
                 }
             });
         };
+
+        // --- LÓGICA DE GRÁFICAS ---
+        function generateStatistics() {
+            const surveys = window.currentSurveys || [];
+            if (surveys.length === 0) {
+                showNotification("No hay datos cargados para generar gráficas.", true);
+                return;
+            }
+
+            // Estructura de conteo para Alimentos
+            const foodStats = {
+                labels: ['Sabor', 'Variedad', 'Presentación', 'Cantidad', 'Temperatura', 'Frescura'],
+                data: {
+                    'Malo': [0,0,0,0,0,0],
+                    'Regular': [0,0,0,0,0,0],
+                    'Bueno': [0,0,0,0,0,0],
+                    'Superó mis expectativas': [0,0,0,0,0,0]
+                }
+            };
+
+            // Estructura de conteo para Servicio
+            const serviceStats = {
+                labels: ['Limpieza', 'Comodidad', 'Amabilidad', 'Rapidez'],
+                data: {
+                    'Malo': [0,0,0,0],
+                    'Regular': [0,0,0,0],
+                    'Bueno': [0,0,0,0],
+                    'Superó mis expectativas': [0,0,0,0]
+                }
+            };
+
+            // Helper para incrementar conteo
+            const increment = (statsObj, index, value) => {
+                // Normalización de V1 (Estrellas) a Categorías V2
+                let category = value;
+                if (typeof value === 'number') {
+                    if (value <= 1) category = 'Malo';
+                    else if (value === 2) category = 'Regular';
+                    else if (value >= 3 && value <= 4) category = 'Bueno';
+                    else if (value === 5) category = 'Superó mis expectativas';
+                }
+                
+                // Limpieza de string (por si viene con "Otros: ...")
+                if (typeof category === 'string' && category.startsWith('Otros:')) return; // Ignorar otros por ahora en gráfica
+                
+                if (statsObj.data[category] && statsObj.data[category][index] !== undefined) {
+                    statsObj.data[category][index]++;
+                }
+            };
+
+            surveys.forEach(s => {
+                if (s.version === 'v2') {
+                    // Alimentos
+                    increment(foodStats, 0, s['1.1']); // Sabor
+                    increment(foodStats, 1, s['1.2']); // Variedad
+                    increment(foodStats, 2, s['1.3']); // Presentación
+                    increment(foodStats, 3, s['1.4']); // Cantidad
+                    increment(foodStats, 4, s['1.5']); // Temperatura
+                    increment(foodStats, 5, s['1.6']); // Frescura
+                    
+                    // Servicio
+                    increment(serviceStats, 0, s['2.1']); // Limpieza
+                    increment(serviceStats, 1, s['2.2']); // Comodidad
+                    increment(serviceStats, 2, s['2.3']); // Amabilidad
+                    increment(serviceStats, 3, s['2.4']); // Rapidez
+                } else if (s.version === 'v1' && s.ratings) {
+                    // Mapeo aproximado de V1 a las nuevas categorías
+                    increment(foodStats, 0, s.ratings.flavor); // Sabor -> Sabor
+                    increment(foodStats, 3, s.ratings.portion); // Porción -> Cantidad
+                    increment(serviceStats, 0, s.ratings.cleanliness); // Limpieza -> Limpieza
+                    increment(serviceStats, 2, s.ratings.service); // Servicio -> Amabilidad
+                }
+            });
+
+            renderChart('foodChart', foodStats, foodChartInstance, (chart) => foodChartInstance = chart);
+            renderChart('serviceChart', serviceStats, serviceChartInstance, (chart) => serviceChartInstance = chart);
+        }
+
+        function renderChart(canvasId, statsData, chartInstance, setChartInstance) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+
+            const newChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: statsData.labels,
+                    datasets: [
+                        { label: 'Malo', data: statsData.data['Malo'], backgroundColor: '#ef4444' }, // Red-500
+                        { label: 'Regular', data: statsData.data['Regular'], backgroundColor: '#eab308' }, // Yellow-500
+                        { label: 'Bueno', data: statsData.data['Bueno'], backgroundColor: '#22c55e' }, // Green-500
+                        { label: 'Superó Exp.', data: statsData.data['Superó mis expectativas'], backgroundColor: '#3b82f6' } // Blue-500
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+                    },
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+            setChartInstance(newChart);
+        }
 
         function getWeekDates(date, weekOffset = 0) {
             const current = new Date(date);
@@ -988,6 +1121,21 @@
             });
              document.getElementById('close-survey-detail-footer-btn').addEventListener('click', () => {
                 document.getElementById('survey-detail-modal').classList.add('hidden');
+            });
+
+            // Listeners para el modal de ESTADÍSTICAS
+            document.getElementById('view-stats-btn').addEventListener('click', () => {
+                // Primero nos aseguramos de tener los datos (llamamos a loadSurveyResults que llena window.currentSurveys)
+                loadSurveyResults().then(() => {
+                    document.getElementById('stats-modal').classList.remove('hidden');
+                    generateStatistics();
+                });
+            });
+            document.getElementById('close-stats-btn').addEventListener('click', () => {
+                document.getElementById('stats-modal').classList.add('hidden');
+            });
+            document.getElementById('close-stats-footer-btn').addEventListener('click', () => {
+                document.getElementById('stats-modal').classList.add('hidden');
             });
         }
         
