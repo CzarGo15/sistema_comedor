@@ -64,8 +64,8 @@
         </div>
     </div>
     
-    <!-- MODAL DE CONFIRMACIÓN -->
-    <div id="confirm-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
+    <!-- MODAL DE CONFIRMACIÓN (Z-INDEX 100) -->
+    <div id="confirm-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-[100]">
         <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center">
             <h2 class="text-2xl font-bold mb-4" id="confirm-title"></h2>
             <p id="confirm-message" class="text-gray-600 mb-6"></p>
@@ -108,7 +108,7 @@
     <div id="feedback-modal" class="modal-overlay hidden fixed inset-0 bg-gray-900 bg-opacity-60 flex items-center justify-center z-50">
         <div class="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col">
             <div class="flex justify-between items-center mb-4 border-b pb-2">
-                <h2 class="text-2xl font-bold text-gray-800">Resultados de Encuestas (V2)</h2>
+                <h2 class="text-2xl font-bold text-gray-800">Resultados de Encuestas (Completo)</h2>
                 <button id="close-feedback-btn" class="text-gray-500 hover:text-gray-700 font-bold text-xl">&times;</button>
             </div>
             <div class="flex-1 overflow-y-auto">
@@ -117,7 +117,7 @@
                         <tr>
                             <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Fecha</th>
                             <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Empleado</th>
-                            <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider w-1/3">Comentario "Mejora"</th>
+                            <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider w-1/3">Comentario Resumen</th>
                             <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Acciones</th>
                         </tr>
                     </thead>
@@ -273,28 +273,23 @@
 
             const content = document.getElementById('survey-detail-content');
             
-            // Lógica para mostrar nombre real si está disponible
-            let displayName = survey.employeeName || 'Desconocido';
-            let displayId = survey.employeeId || 'Sin ID';
-            let extraLabel = '';
-
-            // Si existen los campos "reales" (auditoría), úsalos
-            if (survey.realEmployeeName) {
-                displayName = survey.realEmployeeName;
-                if (survey.isAnonymous) {
-                     extraLabel = '<span class="ml-2 bg-red-100 text-red-600 text-xs px-2 py-1 rounded font-bold border border-red-200">ANÓNIMO</span>';
-                }
-            }
-            if (survey.realEmployeeId) {
-                displayId = survey.realEmployeeId;
-            }
-
             // Función helper para generar bloques
             const createBlock = (label, value) => `
                 <div class="survey-detail-group">
                     <span class="survey-detail-label">${label}</span>
                     <span class="survey-detail-value">${value || '-'}</span>
                 </div>`;
+
+            // Detectar nombre real si es anónimo
+            let displayName = survey.employeeName || 'Desconocido';
+            let displayId = survey.employeeId || 'Sin ID';
+            let extraLabel = '';
+
+            if (survey.realEmployeeName) {
+                displayName = survey.realEmployeeName;
+                if (survey.isAnonymous) extraLabel = '<span class="ml-2 bg-red-100 text-red-600 text-xs px-2 py-1 rounded font-bold border border-red-200">ANÓNIMO</span>';
+            }
+            if (survey.realEmployeeId) displayId = survey.realEmployeeId;
 
             let html = `
                 <div class="grid grid-cols-2 gap-4 mb-4">
@@ -309,7 +304,29 @@
                 </div>
             `;
 
-            html += `<h4 class="survey-section-title">1. Alimentos</h4>
+            if (survey.version === 'v1') {
+                // RENDERIZADO PARA ENCUESTA ANTIGUA (Simple)
+                html += `<h4 class="survey-section-title">Resultados (Formato Anterior)</h4>`;
+                
+                if (survey.ratings) {
+                    html += `<div class="grid grid-cols-2 gap-2">
+                        ${createBlock('Sabor', survey.ratings.flavor ? survey.ratings.flavor + ' ⭐' : '-')}
+                        ${createBlock('Porción', survey.ratings.portion ? survey.ratings.portion + ' ⭐' : '-')}
+                        ${createBlock('Servicio', survey.ratings.service ? survey.ratings.service + ' ⭐' : '-')}
+                        ${createBlock('Limpieza', survey.ratings.cleanliness ? survey.ratings.cleanliness + ' ⭐' : '-')}
+                    </div>`;
+                } else if (survey.rating) {
+                     html += createBlock('Calificación General', survey.rating + ' ⭐');
+                }
+                
+                html += `<h4 class="survey-section-title">Comentarios</h4>
+                         <div class="survey-detail-group">
+                            <span class="survey-detail-value italic">"${survey.comment || 'Sin comentarios'}"</span>
+                         </div>`;
+
+            } else {
+                // RENDERIZADO PARA ENCUESTA NUEVA (Detallada)
+                html += `<h4 class="survey-section-title">1. Alimentos</h4>
                      <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                         ${createBlock('1.1 Sabor', survey['1.1'])}
                         ${createBlock('1.2 Variedad', survey['1.2'])}
@@ -319,34 +336,39 @@
                         ${createBlock('1.6 Frescura', survey['1.6'])}
                      </div>`;
 
-            html += `<h4 class="survey-section-title">2. Comedor y Servicio</h4>
-                     <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        ${createBlock('2.1 Limpieza', survey['2.1'])}
-                        ${createBlock('2.2 Comodidad', survey['2.2'])}
-                        ${createBlock('2.3 Amabilidad', survey['2.3'])}
-                        ${createBlock('2.4 Rapidez', survey['2.4'])}
-                     </div>`;
+                html += `<h4 class="survey-section-title">2. Comedor y Servicio</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            ${createBlock('2.1 Limpieza', survey['2.1'])}
+                            ${createBlock('2.2 Comodidad', survey['2.2'])}
+                            ${createBlock('2.3 Amabilidad', survey['2.3'])}
+                            ${createBlock('2.4 Rapidez', survey['2.4'])}
+                        </div>`;
 
-            html += `<h4 class="survey-section-title">3. Comentarios y Sugerencias</h4>
-                     ${createBlock('3.1 Lo que más gustó', survey['3.1 Gusto'])}
-                     ${createBlock('3.2 Aspectos a mejorar', survey['3.2 Mejora'])}
-                     ${createBlock('3.3 Sugerencia de menú', survey['3.3 Sugerencia Menu'])}`;
+                html += `<h4 class="survey-section-title">3. Comentarios y Sugerencias</h4>
+                        ${createBlock('3.1 Lo que más gustó', survey['3.1 Gusto'])}
+                        ${createBlock('3.2 Aspectos a mejorar', survey['3.2 Mejora'])}
+                        ${createBlock('3.3 Sugerencia de menú', survey['3.3 Sugerencia Menu'])}`;
+            }
 
             content.innerHTML = html;
             document.getElementById('survey-detail-modal').classList.remove('hidden');
         };
 
         // Función global para ELIMINAR encuesta
-        window.deleteSurvey = function(surveyId) {
-            if(!surveyId) return;
+        window.deleteSurvey = function(surveyIndex) {
+            const survey = window.currentSurveys[surveyIndex];
+            if(!survey) return;
+            
+            // Determinar de qué colección borrar
+            const collectionName = survey.version === 'v1' ? 'surveys' : 'surveys_v2';
             
             showConfirmation('Eliminar Encuesta', '¿Estás seguro de que quieres eliminar esta encuesta? Esta acción no se puede deshacer.', async () => {
                 try {
-                    await deleteDoc(doc(db, 'surveys_v2', surveyId));
-                    await logAction('Eliminar Encuesta', `Se eliminó la encuesta ID: ${surveyId}`);
+                    await deleteDoc(doc(db, collectionName, survey.id));
+                    await logAction('Eliminar Encuesta', `Se eliminó la encuesta ID: ${survey.id} (${collectionName})`);
                     showNotification('Encuesta eliminada correctamente.');
                     
-                    // Recargar la lista (si está abierto el modal)
+                    // Recargar la lista
                     loadSurveyResults();
                 } catch (error) {
                     console.error("Error al eliminar encuesta:", error);
@@ -487,72 +509,89 @@
         }
         // -----------------------------------
 
-        // --- SISTEMA DE ENCUESTAS (V2) ---
+        // --- SISTEMA DE ENCUESTAS (FUSIÓN V1 + V2) ---
         async function loadSurveyResults() {
             const listContainer = document.getElementById('feedback-list');
-            listContainer.innerHTML = '<tr><td colspan="4" class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">Cargando resultados...</td></tr>';
+            listContainer.innerHTML = '<tr><td colspan="4" class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">Cargando resultados (Combinando histórico)...</td></tr>';
             
             try {
-                // Leemos de la colección nueva 'surveys_v2'
-                const q = query(collection(db, 'surveys_v2'), orderBy('timestamp', 'desc'), limit(50));
-                const querySnapshot = await getDocs(q);
+                // 1. Fetch Nuevas (surveys_v2) - SIN LÍMITE
+                const qV2 = query(collection(db, 'surveys_v2'), orderBy('timestamp', 'desc')); 
+                const snapV2 = await getDocs(qV2);
                 
+                // 2. Fetch Antiguas (surveys) - SIN LÍMITE
+                const qV1 = query(collection(db, 'surveys'), orderBy('timestamp', 'desc'));
+                const snapV1 = await getDocs(qV1);
+
                 listContainer.innerHTML = '';
                 
-                if (querySnapshot.empty) {
+                if (snapV2.empty && snapV1.empty) {
                     listContainer.innerHTML = '<tr><td colspan="4" class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">No hay encuestas enviadas aún.</td></tr>';
                     return;
                 }
 
-                // Guardamos en variable global para acceso desde el modal de detalle
-                window.currentSurveys = [];
+                // 3. Combinar Resultados
+                let combinedSurveys = [];
+                snapV2.forEach(doc => combinedSurveys.push({ ...doc.data(), id: doc.id, version: 'v2' }));
+                snapV1.forEach(doc => combinedSurveys.push({ ...doc.data(), id: doc.id, version: 'v1' }));
 
-                querySnapshot.forEach((doc) => {
-                    const survey = doc.data();
-                    window.currentSurveys.push(survey); // Push al array global
-                    const index = window.currentSurveys.length - 1;
-                    const surveyId = doc.id; // ID del documento para borrar
+                // 4. Ordenar por fecha descendente (Lo más nuevo primero)
+                combinedSurveys.sort((a, b) => {
+                    const tA = a.timestamp ? a.timestamp.toMillis() : 0;
+                    const tB = b.timestamp ? b.timestamp.toMillis() : 0;
+                    return tB - tA;
+                });
 
+                // Guardar en variable global para acceso desde el modal
+                window.currentSurveys = combinedSurveys;
+
+                // 5. Renderizar
+                combinedSurveys.forEach((survey, index) => {
                     const date = survey.timestamp ? survey.timestamp.toDate().toLocaleString('es-MX') : 'Sin fecha';
                     
-                    // LÓGICA DE VISUALIZACIÓN EN TABLA (Con soporte para Admin ver "Anónimo")
+                    // LÓGICA DE VISUALIZACIÓN
                     let displayName = survey.employeeName || 'Desconocido';
                     let displayId = survey.employeeId || 'Sin ID';
                     
-                    // Si existen los campos de auditoría (realEmployeeName), úsalos pero marca visualmente
+                    // Auditoría de anónimo (Válido para ambas versiones si tienen el campo)
                     if (survey.realEmployeeName) {
                         displayName = survey.realEmployeeName;
-                        if (survey.isAnonymous) {
-                            displayName += " (ANÓNIMO)";
-                        }
+                        if (survey.isAnonymous) displayName += " (ANÓNIMO)";
                     }
-                    if (survey.realEmployeeId) {
-                         displayId = survey.realEmployeeId;
-                    }
+                    if (survey.realEmployeeId) displayId = survey.realEmployeeId;
 
-                    // Mostramos el comentario de mejora como resumen
-                    const mejoraComment = survey['3.2 Mejora'] ? 
-                        (survey['3.2 Mejora'].length > 50 ? survey['3.2 Mejora'].substring(0,50) + '...' : survey['3.2 Mejora']) 
-                        : 'Sin comentarios específicos';
+                    // Comentario resumen inteligente
+                    let mainComment = 'Sin comentarios';
+                    if (survey.version === 'v2') {
+                        mainComment = survey['3.2 Mejora'] || 'Sin comentarios específicos';
+                    } else {
+                        mainComment = survey.comment || 'Sin comentarios';
+                    }
+                    // Truncar si es muy largo
+                    if (mainComment.length > 50) mainComment = mainComment.substring(0, 50) + '...';
 
                     const tr = document.createElement('tr');
-                    // Si es anónimo, pintamos el nombre en un color diferente o estilo
                     const nameClass = survey.isAnonymous ? "text-red-600 font-bold" : "text-gray-900 font-semibold";
                     const idClass = survey.isAnonymous ? "text-red-400" : "text-gray-500";
+
+                    // Etiqueta de versión para diferenciar
+                    const verBadge = survey.version === 'v1' 
+                        ? '<span class="text-[10px] bg-gray-200 px-1 rounded ml-1 text-gray-600 border border-gray-300">V1 (Antigua)</span>' 
+                        : '<span class="text-[10px] bg-blue-100 px-1 rounded ml-1 text-blue-600 border border-blue-200">V2 (Nueva)</span>';
 
                     tr.innerHTML = `
                         <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><p class="text-gray-900 whitespace-no-wrap">${date}</p></td>
                         <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
-                            <p class="${nameClass} whitespace-no-wrap">${displayName}</p>
+                            <p class="${nameClass} whitespace-no-wrap">${displayName} ${verBadge}</p>
                             <p class="${idClass} text-xs">${displayId}</p>
                         </td>
-                        <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><p class="text-gray-900 text-sm italic">"${mejoraComment}"</p></td>
+                        <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><p class="text-gray-900 text-sm italic">"${mainComment}"</p></td>
                         <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">
                             <div class="flex items-center justify-center space-x-2">
                                 <button onclick="window.showSurveyDetail(${index})" class="bg-blue-100 text-blue-600 hover:bg-blue-200 font-bold py-1 px-3 rounded text-xs transition" title="Ver Detalle">
                                     👁️
                                 </button>
-                                <button onclick="window.deleteSurvey('${surveyId}')" class="bg-red-100 text-red-600 hover:bg-red-200 font-bold py-1 px-3 rounded text-xs transition" title="Eliminar Encuesta">
+                                <button onclick="window.deleteSurvey(${index})" class="bg-red-100 text-red-600 hover:bg-red-200 font-bold py-1 px-3 rounded text-xs transition" title="Eliminar Encuesta">
                                     🗑️
                                 </button>
                             </div>
