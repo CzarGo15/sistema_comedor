@@ -141,15 +141,32 @@
             return snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.active);
         }
 
+        function substitutionApplies(change, slot) {
+            const target = change.appliesTo || change.slot || 'main';
+            return target === 'all' || target === slot || (slot === 'main' && target === 'main');
+        }
+
         function getEffectiveMainMeal(selection, day = currentDayName) {
             const originalOption = selection.mainSelection?.[day];
             if (!originalOption || originalOption === 'ninguna') return null;
             const originalDish = currentMenu[day]?.[originalOption]?.fuerte || 'Platillo no definido';
             const response = selection.substitutionResponses?.[day]?.main;
             if (response) return { dish: response.replacementDish, mode: response.serviceMode, originalDish: response.originalDish || originalDish, replacement: true, statusType: 'replacement' };
-            const change = activeSubstitutions.find(item => item.slot === 'main' && item.day === day && item.originalOption === originalOption);
+            const change = activeSubstitutions.find(item => item.day === day && item.originalOption === originalOption && substitutionApplies(item, 'main'));
             if (change) return { dish: change.replacementDish, originalDish: change.originalDish || originalDish, pending: true, replacement: true, statusType: 'replacement' };
             return { dish: originalDish, mode: 'dine_in', replacement: false, statusType: 'main' };
+        }
+
+        function getEffectiveTakeawayMeal(selection, number, day = currentDayName) {
+            const slot = `takeaway_${number}`;
+            const originalOption = selection.takeawaySelections?.[number]?.[day];
+            if (!originalOption || originalOption === 'ninguna') return null;
+            const originalDish = currentMenu[day]?.[originalOption]?.fuerte || 'Platillo no definido';
+            const response = selection.substitutionResponses?.[day]?.[slot];
+            if (response) return { dish: response.replacementDish, mode: response.serviceMode, originalDish: response.originalDish || originalDish, replacement: true, statusType: 'replacement_takeaway' };
+            const change = activeSubstitutions.find(item => item.day === day && item.originalOption === originalOption && substitutionApplies(item, slot));
+            if (change) return { dish: change.replacementDish, originalDish: change.originalDish || originalDish, pending: true, replacement: true, statusType: 'replacement_takeaway' };
+            return { dish: originalDish, mode: 'takeaway', replacement: false, statusType: 'takeaway' };
         }
 
         function showNotification(message, isError = false) {
@@ -250,12 +267,15 @@
             // Menús para Llevar
             if (selection.takeawaySelections) {
                 Object.entries(selection.takeawaySelections).forEach(([number, takeaway]) => {
-                    const takeawaySelectionKey = takeaway[currentDayName];
-                    if (takeawaySelectionKey && takeawaySelectionKey !== 'ninguna') {
+                    const takeawayMeal = getEffectiveTakeawayMeal(selection, number);
+                    if (takeawayMeal && !takeawayMeal.pending) {
                         hasMeals = true;
-                        const mealName = currentMenu[currentDayName]?.[takeawaySelectionKey]?.fuerte || 'Platillo no definido';
-                        const isDelivered = selection.status?.[currentDayName]?.[`takeaway_${number}`] === 'delivered';
-                        detailsHtml += createMealCard('takeaway', number, `Menú para Llevar #${number}`, mealName, isDelivered, selection.weekStart, selection.employeeId);
+                        const statusKey = takeawayMeal.replacement ? `replacement_takeaway_${number}` : `takeaway_${number}`;
+                        const isDelivered = selection.status?.[currentDayName]?.[statusKey] === 'delivered';
+                        const title = takeawayMeal.replacement ? `Sustitución · Menú adicional #${number} (${takeawayMeal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : `Menú para Llevar #${number}`;
+                        detailsHtml += createMealCard(takeawayMeal.statusType, number, title, takeawayMeal.dish, isDelivered, selection.weekStart, selection.employeeId);
+                    } else if (takeawayMeal?.pending) {
+                        detailsHtml += `<div class="rounded-lg bg-orange-50 p-4 text-orange-800">La sustitución del menú adicional #${number} (${takeawayMeal.originalDish}) está pendiente de confirmación.</div>`;
                     }
                 });
             }
@@ -385,6 +405,8 @@
                 statusKey = `status.${day}.main`;
             } else if (type === 'replacement') {
                 statusKey = `status.${day}.replacement_main`;
+            } else if (type === 'replacement_takeaway') {
+                statusKey = `status.${day}.replacement_takeaway_${number}`;
             } else {
                 statusKey = `status.${day}.takeaway_${number}`;
             }
@@ -461,14 +483,15 @@
                 
                 if (selection.takeawaySelections) {
                     Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
-                        const takeawaySel = selData[currentDayName];
-                        if (takeawaySel && takeawaySel !== 'ninguna') {
+                        const takeawayMeal = getEffectiveTakeawayMeal(selection, num);
+                        if (takeawayMeal && !takeawayMeal.pending) {
                             totalMeals++;
-                            const takeawayDish = currentMenu[currentDayName]?.[takeawaySel]?.fuerte || 'Platillo no definido';
+                            const takeawayDish = takeawayMeal.dish;
                             if (!platilloTotals[takeawayDish]) platilloTotals[takeawayDish] = { total: 0, delivered: 0, name: takeawayDish, dineIn: 0, takeaway: 0 };
                             platilloTotals[takeawayDish].total++;
-                            platilloTotals[takeawayDish].takeaway++;
-                            if (selection.status?.[currentDayName]?.[`takeaway_${num}`] === 'delivered') {
+                            platilloTotals[takeawayDish][takeawayMeal.mode === 'takeaway' ? 'takeaway' : 'dineIn']++;
+                            const statusKey = takeawayMeal.replacement ? `replacement_takeaway_${num}` : `takeaway_${num}`;
+                            if (selection.status?.[currentDayName]?.[statusKey] === 'delivered') {
                                 deliveredMeals++;
                                 platilloTotals[takeawayDish].delivered++;
                             } else {

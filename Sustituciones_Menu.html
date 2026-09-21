@@ -19,7 +19,7 @@
 
   <main id="app" class="hidden mx-auto max-w-5xl p-4 sm:p-8">
     <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <div><h1 class="text-3xl font-bold">Cambios urgentes de menú</h1><p class="text-gray-600">El platillo original no se elimina; se registra una sustitución y la respuesta del empleado.</p></div>
+      <div><h1 class="text-3xl font-bold">Cambios urgentes de menú</h1><p class="text-gray-600">El platillo original no se elimina; el cambio se aplica al menú principal y a los adicionales que eligieron ese platillo.</p></div>
       <a href="./Principal_Menu.html" class="rounded-lg bg-gray-200 px-4 py-2 font-semibold">Administración</a>
     </header>
 
@@ -85,7 +85,12 @@
     }
     async function affectedCount(day, originalOption) {
       const snap = await getDocs(query(collection(db, 'selections'), where('weekStart', '==', weekKey)));
-      return snap.docs.filter(item => item.data().mainSelection?.[day] === originalOption).length;
+      return snap.docs.reduce((count, item) => {
+        const selection = item.data();
+        const mainMatches = selection.mainSelection?.[day] === originalOption ? 1 : 0;
+        const additionalMatches = Object.values(selection.takeawaySelections || {}).filter(menu => menu?.[day] === originalOption).length;
+        return count + mainMatches + additionalMatches;
+      }, 0);
     }
     async function loadChanges() {
       const list = document.getElementById('change-list');
@@ -122,8 +127,8 @@
       if (!replacementDish) return show('Escribe el platillo sustituto.', true);
       const originalDish = menu[day]?.[originalOption]?.fuerte;
       if (!originalDish) return show('No se encontró el platillo original.', true);
-      const id = `${weekKey}_${day}_main_${originalOption}`;
-      await setDoc(doc(db, 'menu_substitutions', id), { weekStart: weekKey, day, slot: 'main', originalOption, originalDish, replacementDish, reason, active: true, requiresServiceMode: true, createdBy: employee.employeeId, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+      const id = `${weekKey}_${day}_all_${originalOption}`;
+      await setDoc(doc(db, 'menu_substitutions', id), { weekStart: weekKey, day, appliesTo: 'all', originalOption, originalDish, replacementDish, reason, active: true, requiresServiceMode: true, createdBy: employee.employeeId, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
       const count = await affectedCount(day, originalOption);
       show(`Cambio activado. ${count} empleado(s) recibirán la encuesta.`);
       document.getElementById('replacement-dish').value = ''; document.getElementById('reason').value = '';

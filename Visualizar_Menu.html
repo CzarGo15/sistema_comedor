@@ -111,29 +111,18 @@
             }
 
             const { mainSelection, takeawaySelections } = selectionData;
-            const pendingChanges = activeSubstitutions.filter(change =>
-                change.slot === 'main' && mainSelection?.[change.day] === change.originalOption &&
-                !selectionData.substitutionResponses?.[change.day]?.main
-            );
+            const hasPendingChanges = hasPendingChangesForSelection(selectionData);
             
             let summaryHtml = `<div class="bg-white p-6 rounded-2xl shadow-lg">
                 <h2 class="text-2xl font-semibold mb-1">Tu Menú para la Semana Actual</h2>
                 <p class="text-gray-500 mb-6">${formatDateRange(currentWeekDates.start)}</p>`;
 
-            if (pendingChanges.length) {
+            if (hasPendingChanges) {
                 summaryHtml += `<section class="mb-8 rounded-xl border-l-4 border-orange-500 bg-orange-50 p-5">
                     <h3 class="text-xl font-bold text-orange-800">Aviso: cambio de menú</h3>
-                    <p class="mt-1 text-orange-900">Uno o más platillos que seleccionaste no estarán disponibles. Confirma cómo recibirás la sustitución.</p>
-                    <div class="mt-4 space-y-4">`;
-                pendingChanges.forEach(change => {
-                    summaryHtml += `<div class="rounded-lg bg-white p-4 shadow-sm">
-                        <p class="font-bold">${change.day}: <span class="line-through text-gray-500">${change.originalDish}</span> → ${change.replacementDish}</p>
-                        <p class="mt-2 text-sm font-semibold">¿Cómo deseas recibir tu comida?</p>
-                        <label class="mr-5 inline-flex items-center gap-2"><input type="radio" name="change-mode-${change.day}" value="dine_in"> Comer en el comedor</label>
-                        <label class="inline-flex items-center gap-2"><input type="radio" name="change-mode-${change.day}" value="takeaway"> Para llevar</label>
-                    </div>`;
-                });
-                summaryHtml += `</div><button id="confirm-changes-button" class="mt-5 rounded-lg bg-orange-600 px-5 py-3 font-bold text-white hover:bg-orange-700">Confirmar cambios</button><p id="change-feedback" class="mt-2 font-semibold"></p></section>`;
+                    <p class="mt-1 text-orange-900">Tienes uno o más cambios pendientes, incluidos posibles menús adicionales.</p>
+                    <a href="./Cambio_Menu_Empleado.html" class="mt-4 inline-block rounded-lg bg-orange-600 px-5 py-3 font-bold text-white hover:bg-orange-700">Revisar y confirmar cambios</a>
+                </section>`;
             }
 
             if (mainSelection) {
@@ -164,7 +153,15 @@
 
             summaryHtml += `</div>`;
             mainContent.innerHTML = summaryHtml;
-            document.getElementById('confirm-changes-button')?.addEventListener('click', () => saveSubstitutionResponses(selectionData, pendingChanges));
+        }
+
+        function hasPendingChangesForSelection(selectionData) {
+            const appliesTo = (change, slot) => { const target = change.appliesTo || change.slot || 'main'; return target === 'all' || target === slot || (slot === 'main' && target === 'main'); };
+            const pendingIn = (values, slot) => days.some(day => {
+                const option = values?.[day];
+                return option && option !== 'ninguna' && !selectionData.substitutionResponses?.[day]?.[slot] && activeSubstitutions.some(change => change.day === day && change.originalOption === option && appliesTo(change, slot));
+            });
+            return pendingIn(selectionData.mainSelection, 'main') || Object.entries(selectionData.takeawaySelections || {}).some(([number, values]) => pendingIn(values, `takeaway_${number}`));
         }
 
         function getEffectiveMainMeal(selectionData, menu, day) {
@@ -172,7 +169,7 @@
             const originalDish = originalOption && originalOption !== 'ninguna' ? (menu[day]?.[originalOption]?.fuerte || 'No definido') : 'Ninguna';
             const response = selectionData.substitutionResponses?.[day]?.main;
             if (response) return { originalDish: response.originalDish || originalDish, replacementDish: response.replacementDish, serviceMode: response.serviceMode };
-            const change = activeSubstitutions.find(item => item.slot === 'main' && item.day === day && item.originalOption === originalOption);
+            const change = activeSubstitutions.find(item => (item.appliesTo || item.slot || 'main') !== 'takeaway' && item.day === day && item.originalOption === originalOption);
             return change ? { originalDish: change.originalDish || originalDish, replacementDish: change.replacementDish, serviceMode: null } : { originalDish };
         }
 

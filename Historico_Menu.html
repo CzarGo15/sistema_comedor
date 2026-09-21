@@ -200,9 +200,15 @@
                         }
                         if (selection.takeawaySelections) {
                             Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
-                                const takeawaySel = selData[day];
-                                if(takeawaySel === 'ninguna') cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Llevar #${num}: Ninguna</div>`;
-                                else if(takeawaySel) cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${selection.status?.[day]?.[`takeaway_${num}`] === 'delivered' ? 'bg-green-200' : 'bg-yellow-100'}">Llevar #${num}: ${menuData[day]?.[takeawaySel]?.fuerte || 'N/A'}</div>`;
+                                 const takeawaySel = selData[day];
+                                 if(takeawaySel === 'ninguna') cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Llevar #${num}: Ninguna</div>`;
+                                 else if(takeawaySel) {
+                                     const originalDish = menuData[day]?.[takeawaySel]?.fuerte || 'N/A';
+                                     const replacement = selection.substitutionResponses?.[day]?.[`takeaway_${num}`];
+                                     const dish = replacement ? `<span class="line-through text-gray-500">${replacement.originalDish || originalDish}</span> → ${replacement.replacementDish} (${replacement.serviceMode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : originalDish;
+                                     const statusKey = replacement ? `replacement_takeaway_${num}` : `takeaway_${num}`;
+                                     cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${selection.status?.[day]?.[statusKey] === 'delivered' ? 'bg-green-200' : 'bg-yellow-100'}">Adicional #${num}: ${dish}</div>`;
+                                 }
                             });
                         }
                         tableHtml += `<td class="py-3 px-6 text-center align-top">${cellHtml || ''}</td>`;
@@ -245,7 +251,12 @@
                     if (selection.takeawaySelections) {
                         Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
                             const takeawayRow = {"NÚMERO DE EMPLEADO": selection.employeeId, "NOMBRE": `${selection.employeeName} (Llevar #${num})`};
-                            days.forEach(day => takeawayRow[day.toUpperCase()] = (selData[day] && selData[day] !== 'ninguna') ? (menuData[day]?.[selData[day]]?.fuerte || 'N/A') : 'Ninguna');
+                            days.forEach(day => {
+                                const selected = selData[day];
+                                const originalDish = selected && selected !== 'ninguna' ? (menuData[day]?.[selected]?.fuerte || 'N/A') : null;
+                                const replacement = selection.substitutionResponses?.[day]?.[`takeaway_${num}`];
+                                takeawayRow[day.toUpperCase()] = replacement ? `${replacement.originalDish || originalDish} → ${replacement.replacementDish} (${replacement.serviceMode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : (originalDish || 'Ninguna');
+                            });
                             excelRows.push(takeawayRow);
                         });
                     }
@@ -261,7 +272,11 @@
                             let isDelivered = false;
                             if (row["NOMBRE"].includes("Llevar")) {
                                 const match = row["NOMBRE"].match(/Llevar #(\d+)/);
-                                if (match && selection.status[day]?.[`takeaway_${match[1]}`] === 'delivered') isDelivered = true;
+                                if (match) {
+                                    const num = match[1];
+                                    const statusKey = selection.substitutionResponses?.[day]?.[`takeaway_${num}`] ? `replacement_takeaway_${num}` : `takeaway_${num}`;
+                                    if (selection.status[day]?.[statusKey] === 'delivered') isDelivered = true;
+                                }
                             } else {
                                 const statusKey = selection.substitutionResponses?.[day]?.main ? 'replacement_main' : 'main';
                                 if (selection.status[day]?.[statusKey] === 'delivered') isDelivered = true;

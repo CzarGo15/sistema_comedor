@@ -150,14 +150,30 @@
             return snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.active);
         }
 
+        function substitutionApplies(change, slot) {
+            const target = change.appliesTo || change.slot || 'main';
+            return target === 'all' || target === slot || (slot === 'main' && target === 'main');
+        }
+
         function getEffectiveMainMeal(selection, day, menuData) {
             const originalOption = selection.mainSelection?.[day];
             if (!originalOption || originalOption === 'ninguna') return null;
             const originalDish = menuData[day]?.[originalOption]?.fuerte || 'N/A';
             const response = selection.substitutionResponses?.[day]?.main;
             if (response) return { dish: response.replacementDish, originalDish: response.originalDish || originalDish, mode: response.serviceMode, replacement: true, pending: false };
-            const change = activeSubstitutions.find(item => item.slot === 'main' && item.day === day && item.originalOption === originalOption);
+            const change = activeSubstitutions.find(item => item.day === day && item.originalOption === originalOption && substitutionApplies(item, 'main'));
             return change ? { dish: change.replacementDish, originalDish: change.originalDish || originalDish, replacement: true, pending: true } : { dish: originalDish, replacement: false, pending: false };
+        }
+
+        function getEffectiveTakeawayMeal(selection, number, day, menuData) {
+            const slot = `takeaway_${number}`;
+            const originalOption = selection.takeawaySelections?.[number]?.[day];
+            if (!originalOption || originalOption === 'ninguna') return null;
+            const originalDish = menuData[day]?.[originalOption]?.fuerte || 'N/A';
+            const response = selection.substitutionResponses?.[day]?.[slot];
+            if (response) return { dish: response.replacementDish, originalDish: response.originalDish || originalDish, mode: response.serviceMode, replacement: true, pending: false };
+            const change = activeSubstitutions.find(item => item.day === day && item.originalOption === originalOption && substitutionApplies(item, slot));
+            return change ? { dish: change.replacementDish, originalDish: change.originalDish || originalDish, replacement: true, pending: true } : { dish: originalDish, mode: 'takeaway', replacement: false, pending: false };
         }
 
         function showNotification(message, isError = false) {
@@ -277,14 +293,20 @@
                             if (selection.takeawaySelections) {
                                 Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
                                     const takeawaySel = selData[day];
-                                    if (takeawaySel && takeawaySel !== 'ninguna') {
-                                        const food = menuData[day]?.[takeawaySel]?.fuerte || 'N/A';
+                                    const takeawayMeal = getEffectiveTakeawayMeal(selection, num, day, menuData);
+                                    if (takeawayMeal && !takeawayMeal.pending) {
+                                        const food = takeawayMeal.dish;
                                         if (food !== 'N/A') {
                                             totals[day][food] = (totals[day][food] || 0) + 1;
                                             grandTotalMeals++;
                                         }
-                                        const isDelivered = selection.status?.[day]?.[`takeaway_${num}`] === 'delivered';
-                                        cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${isDelivered ? 'bg-green-200' : 'bg-yellow-100'}">Llevar #${num}: ${food}</div>`;
+                                        const statusKey = takeawayMeal.replacement ? `replacement_takeaway_${num}` : `takeaway_${num}`;
+                                        const isDelivered = selection.status?.[day]?.[statusKey] === 'delivered';
+                                        const prefix = takeawayMeal.replacement ? `Sustitución · Adicional #${num}${takeawayMeal.mode ? ` · ${takeawayMeal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'}` : ''}: ` : `Llevar #${num}: `;
+                                        const original = takeawayMeal.replacement ? `<span class="line-through text-gray-500">${takeawayMeal.originalDish}</span> → ` : '';
+                                        cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${isDelivered ? 'bg-green-200' : 'bg-yellow-100'}">${prefix}${original}${food}</div>`;
+                                    } else if (takeawayMeal?.pending) {
+                                        cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-orange-100 text-orange-800">Sustitución pendiente · Adicional #${num}: ${takeawayMeal.originalDish} → ${takeawayMeal.dish}</div>`;
                                     } else if (takeawaySel === 'ninguna') {
                                          cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Llevar #${num}: Ninguna</div>`;
                                     }
@@ -513,8 +535,8 @@
                                 "NOMBRE": `${selection.employeeName} (Llevar #${num})`,
                             };
                             days.forEach(day => {
-                                const takeawaySel = selData[day];
-                                takeawayRow[day.toUpperCase()] = (takeawaySel && takeawaySel !== 'ninguna') ? (menuData[day]?.[takeawaySel]?.fuerte || 'N/A') : 'Ninguna';
+                                const takeawayMeal = getEffectiveTakeawayMeal(selection, num, day, menuData);
+                                takeawayRow[day.toUpperCase()] = takeawayMeal ? (takeawayMeal.pending ? `PENDIENTE: ${takeawayMeal.originalDish} → ${takeawayMeal.dish}` : `${takeawayMeal.replacement ? `${takeawayMeal.originalDish} → ` : ''}${takeawayMeal.dish}${takeawayMeal.mode ? ` (${takeawayMeal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : ''}`) : 'Ninguna';
                             });
                             excelRows.push(takeawayRow);
                         });
@@ -541,13 +563,15 @@
                         let isDelivered = false;
                         if (row["NOMBRE"].includes("Llevar")) {
                             const match = row["NOMBRE"].match(/Llevar #(\d+)/);
-                            if (match) {
-                                const num = match[1];
-                                if (selection.status[day]?.[`takeaway_${num}`] === 'delivered') isDelivered = true;
-                            }
-                        } else {
-                            if (selection.status[day]?.main === 'delivered') isDelivered = true;
-                        }
+                             if (match) {
+                                 const num = match[1];
+                                 const statusKey = selection.substitutionResponses?.[day]?.[`takeaway_${num}`] ? `replacement_takeaway_${num}` : `takeaway_${num}`;
+                                 if (selection.status[day]?.[statusKey] === 'delivered') isDelivered = true;
+                             }
+                         } else {
+                             const statusKey = selection.substitutionResponses?.[day]?.main ? 'replacement_main' : 'main';
+                             if (selection.status[day]?.[statusKey] === 'delivered') isDelivered = true;
+                         }
                         
                         if(isDelivered) ws[cellAddress].s = { fill: greenFill };
                     });

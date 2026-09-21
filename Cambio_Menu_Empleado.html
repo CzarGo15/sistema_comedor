@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cambios de mi menú</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+  <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
+      <h1 class="mb-3 text-2xl font-bold">Cambios de menú</h1>
+      <p class="mb-5 text-gray-600">Ingresa tu número de empleado para revisar y confirmar los cambios.</p>
+      <input id="employee-id-input" class="mb-3 w-full rounded-lg border px-4 py-2" placeholder="Número de empleado">
+      <button id="login-button" class="w-full rounded-lg bg-blue-600 px-4 py-2 font-bold text-white">Continuar</button>
+      <p id="login-error" class="mt-2 text-sm text-red-600"></p>
+    </div>
+  </div>
+
+  <main id="app" class="hidden mx-auto max-w-4xl p-4 sm:p-8">
+    <header class="mb-6 flex items-center justify-between gap-4"><div><h1 class="text-3xl font-bold">Mi menú y cambios</h1><p id="week-label" class="text-gray-600"></p></div><a href="./Visualizar_Menu.html" class="rounded-lg bg-gray-200 px-4 py-2 font-semibold">Ver mi menú</a></header>
+    <div id="content"></div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc, getDocs, collection, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = { apiKey: "AIzaSyBRl9cy-k0MfXOz3-StMr497YwCLQT8il0", authDomain: "ceunico.firebaseapp.com", databaseURL: "https://ceunico.firebaseio.com", projectId: "ceunico", storageBucket: "ceunico.firebasestorage.app", messagingSenderId: "750486055882", appId: "1:750486055882:web:f270aa8cbddcbcd0d37d33" };
+    const app = initializeApp(firebaseConfig); const db = getFirestore(app); const auth = getAuth(app);
+    const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+    let employeeData, currentWeekDates, activeSubstitutions = [], currentMenu = {}, currentSelection;
+
+    function getWeekDates(date) { const current = new Date(date); const day = current.getDay(); if ((day === 5 && date.getHours() >= 17) || day === 6 || day === 0) current.setDate(current.getDate() + 3); const diff = current.getDay() === 0 ? -6 : 1 - current.getDay(); current.setDate(current.getDate() + diff); current.setHours(0, 0, 0, 0); return { start: current }; }
+    function weekKey() { return currentWeekDates.start.toISOString().split('T')[0]; }
+    function weekRange() { const end = new Date(currentWeekDates.start); end.setDate(end.getDate() + 4); return `Del ${currentWeekDates.start.toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })} al ${end.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}`; }
+    function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]); }
+    async function employeeById(id) { const snap = await getDoc(doc(db, 'employees', id)); return snap.exists() ? { ...snap.data(), employeeId: id } : null; }
+    async function loadSubstitutions() { const snap = await getDocs(query(collection(db, 'menu_substitutions'), where('weekStart', '==', weekKey()))); return snap.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.active); }
+    function appliesTo(change, slot) { const target = change.appliesTo || change.slot || 'main'; return target === 'all' || target === slot || (slot === 'main' && target === 'main'); }
+    function menuGroups(selection) { const groups = [{ slot: 'main', title: 'Menú principal', values: selection.mainSelection || {} }]; Object.entries(selection.takeawaySelections || {}).sort(([a], [b]) => Number(a) - Number(b)).forEach(([number, values]) => groups.push({ slot: `takeaway_${number}`, title: `Menú adicional #${number}`, values })); return groups; }
+    function responseFor(day, slot) { return currentSelection.substitutionResponses?.[day]?.[slot]; }
+    function changeFor(day, slot, option) { return activeSubstitutions.find(change => change.day === day && change.originalOption === option && appliesTo(change, slot)); }
+    function effectiveMeal(day, slot, option) { const originalDish = currentMenu[day]?.[option]?.fuerte || 'Platillo no definido'; const response = responseFor(day, slot); if (response) return { originalDish: response.originalDish || originalDish, replacementDish: response.replacementDish, mode: response.serviceMode }; const change = changeFor(day, slot, option); return change ? { originalDish: change.originalDish || originalDish, replacementDish: change.replacementDish, pending: true } : { originalDish }; }
+    function pendingEntries() { const entries = []; menuGroups(currentSelection).forEach(group => days.forEach(day => { const option = group.values[day]; const change = option && option !== 'ninguna' ? changeFor(day, group.slot, option) : null; if (change && !responseFor(day, group.slot)) entries.push({ ...group, day, option, change }); })); return entries; }
+    function renderGroup(group) { const rows = days.map(day => { const option = group.values[day] || 'ninguna'; if (option === 'ninguna') return `<div class="flex justify-between rounded bg-gray-50 p-3"><span>${day}</span><span>Ninguna</span></div>`; const meal = effectiveMeal(day, group.slot, option); const text = meal.replacementDish ? `<span class="text-sm text-gray-500 line-through">${escapeHtml(meal.originalDish)}</span><br><b>${escapeHtml(meal.replacementDish)}</b>${meal.mode ? `<span class="ml-2 rounded bg-green-100 px-2 py-1 text-xs text-green-800">${meal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'}</span>` : '<span class="ml-2 rounded bg-orange-100 px-2 py-1 text-xs text-orange-800">Pendiente</span>'}` : `<b>${escapeHtml(meal.originalDish)}</b>`; return `<div class="flex justify-between gap-4 rounded bg-gray-50 p-3"><span class="font-semibold">${day}</span><span class="text-right">${text}</span></div>`; }).join(''); return `<section class="mb-6 rounded-xl bg-white p-5 shadow"><h2 class="mb-3 text-xl font-bold text-blue-800">${group.title}</h2><div class="space-y-2">${rows}</div></section>`; }
+    function render() {
+      const content = document.getElementById('content'); const pending = pendingEntries();
+      let html = menuGroups(currentSelection).map(renderGroup).join('');
+      if (!pending.length) html += `<section class="rounded-xl border-l-4 border-green-500 bg-green-50 p-5 text-green-800"><b>No tienes cambios pendientes por confirmar.</b></section>`;
+      else {
+        html += `<section class="rounded-xl border-l-4 border-orange-500 bg-orange-50 p-5"><h2 class="text-2xl font-bold text-orange-900">Cambios necesarios en tu menú</h2><p class="mt-1 text-orange-900">Confirma la modalidad para cada comida sustituida.</p><div class="mt-4 space-y-4">`;
+        pending.forEach(item => { html += `<article class="rounded-lg bg-white p-4 shadow-sm"><p class="font-bold">${item.title} · ${item.day}</p><p class="mt-1"><span class="line-through text-gray-500">${escapeHtml(item.change.originalDish)}</span> → <b>${escapeHtml(item.change.replacementDish)}</b></p><p class="mt-3 text-sm font-semibold">¿Cómo deseas recibir esta comida?</p><label class="mr-5 inline-flex items-center gap-2"><input type="radio" name="mode-${item.day}-${item.slot}" value="dine_in"> Comer en comedor</label><label class="inline-flex items-center gap-2"><input type="radio" name="mode-${item.day}-${item.slot}" value="takeaway"> Para llevar</label></article>`; });
+        html += `</div><button id="confirm-button" class="mt-5 rounded-lg bg-orange-600 px-5 py-3 font-bold text-white">Confirmar cambios</button><p id="feedback" class="mt-2 font-semibold"></p></section>`;
+      }
+      content.innerHTML = html; document.getElementById('confirm-button')?.addEventListener('click', () => confirmChanges(pending));
+    }
+    async function confirmChanges(entries) {
+      const feedback = document.getElementById('feedback'); const responses = { ...(currentSelection.substitutionResponses || {}) };
+      for (const item of entries) { const serviceMode = document.querySelector(`input[name="mode-${item.day}-${item.slot}"]:checked`)?.value; if (!serviceMode) { feedback.textContent = `Selecciona la modalidad para ${item.title} del ${item.day}.`; feedback.className = 'mt-2 font-semibold text-red-600'; return; } responses[item.day] = { ...(responses[item.day] || {}), [item.slot]: { substitutionId: item.change.id, originalOption: item.option, originalDish: item.change.originalDish, replacementDish: item.change.replacementDish, serviceMode, confirmedAt: serverTimestamp() } }; }
+      try { await setDoc(doc(db, 'selections', `${weekKey()}_${employeeData.employeeId}`), { substitutionResponses: responses }, { merge: true }); await load(); } catch (error) { console.error(error); feedback.textContent = 'No se pudo guardar tu respuesta.'; feedback.className = 'mt-2 font-semibold text-red-600'; }
+    }
+    async function load() { currentMenu = (await getDoc(doc(db, 'menus', weekKey()))).data()?.menu || {}; const selectionSnap = await getDoc(doc(db, 'selections', `${weekKey()}_${employeeData.employeeId}`)); if (!selectionSnap.exists()) { document.getElementById('content').innerHTML = '<div class="rounded-xl bg-yellow-100 p-5 text-yellow-800">No tienes un menú registrado para la semana actual.</div>'; return; } currentSelection = selectionSnap.data(); activeSubstitutions = await loadSubstitutions(); document.getElementById('week-label').textContent = weekRange(); render(); }
+    function enter(data) { employeeData = data; document.getElementById('login-modal').classList.add('hidden'); document.getElementById('app').classList.remove('hidden'); load(); }
+    document.getElementById('login-button').addEventListener('click', async () => { const data = await employeeById(document.getElementById('employee-id-input').value.trim()); if (!data) { document.getElementById('login-error').textContent = 'Número de empleado no válido.'; return; } sessionStorage.setItem('menuAppUser', JSON.stringify(data)); enter(data); });
+    currentWeekDates = getWeekDates(new Date());
+    onAuthStateChanged(auth, () => { const stored = sessionStorage.getItem('menuAppUser'); if (stored) { const data = JSON.parse(stored); if (data?.employeeId) enter(data); } });
+    signInAnonymously(auth).catch(() => { document.getElementById('login-error').textContent = 'No se pudo conectar con el sistema.'; });
+  </script>
+</body>
+</html>
