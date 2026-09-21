@@ -51,9 +51,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, getDocs, collection, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        let db, auth, userId, employeeData, currentWeekDates;
+        let db, auth, userId, employeeData, currentWeekDates, activeSubstitutions = [];
         const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
 
         function getWeekDates(date) {
@@ -100,6 +100,7 @@
 
             const menu = await loadMenuData(currentWeekDates.start);
             const selectionData = await loadFullSelectionData(currentWeekDates.start, employeeData.employeeId);
+            activeSubstitutions = await loadActiveSubstitutions(currentWeekDates.start);
             
             if (!selectionData || !selectionData.mainSelection) {
                 mainContent.innerHTML = `<div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-lg shadow-md" role="alert">
@@ -110,18 +111,38 @@
             }
 
             const { mainSelection, takeawaySelections } = selectionData;
+            const pendingChanges = activeSubstitutions.filter(change =>
+                change.slot === 'main' && mainSelection?.[change.day] === change.originalOption &&
+                !selectionData.substitutionResponses?.[change.day]?.main
+            );
             
             let summaryHtml = `<div class="bg-white p-6 rounded-2xl shadow-lg">
                 <h2 class="text-2xl font-semibold mb-1">Tu Menú para la Semana Actual</h2>
                 <p class="text-gray-500 mb-6">${formatDateRange(currentWeekDates.start)}</p>`;
 
+            if (pendingChanges.length) {
+                summaryHtml += `<section class="mb-8 rounded-xl border-l-4 border-orange-500 bg-orange-50 p-5">
+                    <h3 class="text-xl font-bold text-orange-800">Aviso: cambio de menú</h3>
+                    <p class="mt-1 text-orange-900">Uno o más platillos que seleccionaste no estarán disponibles. Confirma cómo recibirás la sustitución.</p>
+                    <div class="mt-4 space-y-4">`;
+                pendingChanges.forEach(change => {
+                    summaryHtml += `<div class="rounded-lg bg-white p-4 shadow-sm">
+                        <p class="font-bold">${change.day}: <span class="line-through text-gray-500">${change.originalDish}</span> → ${change.replacementDish}</p>
+                        <p class="mt-2 text-sm font-semibold">¿Cómo deseas recibir tu comida?</p>
+                        <label class="mr-5 inline-flex items-center gap-2"><input type="radio" name="change-mode-${change.day}" value="dine_in"> Comer en el comedor</label>
+                        <label class="inline-flex items-center gap-2"><input type="radio" name="change-mode-${change.day}" value="takeaway"> Para llevar</label>
+                    </div>`;
+                });
+                summaryHtml += `</div><button id="confirm-changes-button" class="mt-5 rounded-lg bg-orange-600 px-5 py-3 font-bold text-white hover:bg-orange-700">Confirmar cambios</button><p id="change-feedback" class="mt-2 font-semibold"></p></section>`;
+            }
+
             if (mainSelection) {
                 summaryHtml += `<div class="mb-8"><h3 class="text-xl font-bold mb-4 text-blue-700">Tu Menú Semanal (Principal)</h3><div class="space-y-4">`;
                 days.forEach(day => {
                     const selectionKey = mainSelection[day] || 'ninguna';
-                    const selectionText = (selectionKey !== 'ninguna') 
-                        ? `${menu[day]?.[selectionKey]?.fuerte || 'No definido'}`
-                        : 'Ninguna';
+                    const meal = getEffectiveMainMeal(selectionData, menu, day);
+                    const selectionText = selectionKey === 'ninguna' ? 'Ninguna' :
+                        meal.replacementDish ? `<span class="text-sm text-gray-500 line-through">${meal.originalDish}</span><br><span>${meal.replacementDish}</span>${meal.serviceMode ? `<span class="ml-2 rounded bg-green-100 px-2 py-1 text-xs text-green-800">${meal.serviceMode === 'takeaway' ? 'Para llevar' : 'Comedor'}</span>` : '<span class="ml-2 rounded bg-orange-100 px-2 py-1 text-xs text-orange-800">Pendiente de confirmar</span>'}` : meal.originalDish;
                     summaryHtml += `<div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><span class="font-semibold">${day}</span><span class="text-right font-bold">${selectionText}</span></div>`;
                 });
                 summaryHtml += `</div></div>`;
@@ -143,6 +164,50 @@
 
             summaryHtml += `</div>`;
             mainContent.innerHTML = summaryHtml;
+            document.getElementById('confirm-changes-button')?.addEventListener('click', () => saveSubstitutionResponses(selectionData, pendingChanges));
+        }
+
+        function getEffectiveMainMeal(selectionData, menu, day) {
+            const originalOption = selectionData.mainSelection?.[day];
+            const originalDish = originalOption && originalOption !== 'ninguna' ? (menu[day]?.[originalOption]?.fuerte || 'No definido') : 'Ninguna';
+            const response = selectionData.substitutionResponses?.[day]?.main;
+            if (response) return { originalDish: response.originalDish || originalDish, replacementDish: response.replacementDish, serviceMode: response.serviceMode };
+            const change = activeSubstitutions.find(item => item.slot === 'main' && item.day === day && item.originalOption === originalOption);
+            return change ? { originalDish: change.originalDish || originalDish, replacementDish: change.replacementDish, serviceMode: null } : { originalDish };
+        }
+
+        async function loadActiveSubstitutions(weekStart) {
+            const weekKey = formatDateForKey(weekStart);
+            const snapshot = await getDocs(query(collection(db, 'menu_substitutions'), where('weekStart', '==', weekKey)));
+            return snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.active);
+        }
+
+        async function saveSubstitutionResponses(selectionData, changes) {
+            const feedback = document.getElementById('change-feedback');
+            const responses = { ...(selectionData.substitutionResponses || {}) };
+            for (const change of changes) {
+                const serviceMode = document.querySelector(`input[name="change-mode-${change.day}"]:checked`)?.value;
+                if (!serviceMode) { feedback.textContent = `Selecciona una modalidad para ${change.day}.`; feedback.className = 'mt-2 font-semibold text-red-600'; return; }
+                responses[change.day] = {
+                    ...(responses[change.day] || {}),
+                    main: {
+                        substitutionId: change.id,
+                        originalOption: change.originalOption,
+                        originalDish: change.originalDish,
+                        replacementDish: change.replacementDish,
+                        serviceMode,
+                        confirmedAt: serverTimestamp()
+                    }
+                };
+            }
+            try {
+                const weekKey = formatDateForKey(currentWeekDates.start);
+                await setDoc(doc(db, 'selections', `${weekKey}_${employeeData.employeeId}`), { substitutionResponses: responses }, { merge: true });
+                await renderVisualizationView();
+            } catch (error) {
+                console.error('Error confirming substitution:', error);
+                feedback.textContent = 'No se pudo guardar tu respuesta.'; feedback.className = 'mt-2 font-semibold text-red-600';
+            }
         }
 
         async function loadMenuData(weekStart) {

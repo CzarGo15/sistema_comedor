@@ -190,7 +190,13 @@
                         if (selection.mainSelection) {
                             const mainSel = selection.mainSelection[day];
                             if(mainSel === 'ninguna') cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Ninguna</div>`;
-                            else if (mainSel) cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${selection.status?.[day]?.main === 'delivered' ? 'bg-green-200' : 'bg-blue-100'}">${menuData[day]?.[mainSel]?.fuerte || 'N/A'}</div>`;
+                            else if (mainSel) {
+                                const originalDish = menuData[day]?.[mainSel]?.fuerte || 'N/A';
+                                const replacement = selection.substitutionResponses?.[day]?.main;
+                                const dish = replacement ? `<span class="line-through text-gray-500">${replacement.originalDish || originalDish}</span> → ${replacement.replacementDish} (${replacement.serviceMode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : originalDish;
+                                const statusKey = replacement ? 'replacement_main' : 'main';
+                                cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${selection.status?.[day]?.[statusKey] === 'delivered' ? 'bg-green-200' : 'bg-blue-100'}">${dish}</div>`;
+                            }
                         }
                         if (selection.takeawaySelections) {
                             Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
@@ -229,7 +235,12 @@
                 querySnapshot.forEach(docSnap => {
                     const selection = docSnap.data();
                     const mainRow = {"NÚMERO DE EMPLEADO": selection.employeeId, "NOMBRE": selection.employeeName};
-                    days.forEach(day => mainRow[day.toUpperCase()] = (selection.mainSelection?.[day] && selection.mainSelection[day] !== 'ninguna') ? (menuData[day]?.[selection.mainSelection[day]]?.fuerte || 'N/A') : 'Ninguna');
+                    days.forEach(day => {
+                        const selected = selection.mainSelection?.[day];
+                        const originalDish = selected && selected !== 'ninguna' ? (menuData[day]?.[selected]?.fuerte || 'N/A') : null;
+                        const replacement = selection.substitutionResponses?.[day]?.main;
+                        mainRow[day.toUpperCase()] = replacement ? `${replacement.originalDish || originalDish} → ${replacement.replacementDish} (${replacement.serviceMode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : (originalDish || 'Ninguna');
+                    });
                     excelRows.push(mainRow);
                     if (selection.takeawaySelections) {
                         Object.entries(selection.takeawaySelections).forEach(([num, selData]) => {
@@ -251,7 +262,10 @@
                             if (row["NOMBRE"].includes("Llevar")) {
                                 const match = row["NOMBRE"].match(/Llevar #(\d+)/);
                                 if (match && selection.status[day]?.[`takeaway_${match[1]}`] === 'delivered') isDelivered = true;
-                            } else if (selection.status[day]?.main === 'delivered') isDelivered = true;
+                            } else {
+                                const statusKey = selection.substitutionResponses?.[day]?.main ? 'replacement_main' : 'main';
+                                if (selection.status[day]?.[statusKey] === 'delivered') isDelivered = true;
+                            }
                             if(isDelivered) ws[cellAddress].s = { fill: greenFill };
                         });
                     }

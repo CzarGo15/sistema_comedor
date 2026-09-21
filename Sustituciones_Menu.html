@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sustituciones de menú</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+  <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
+      <h1 class="mb-3 text-2xl font-bold">Sustituciones de menú</h1>
+      <p class="mb-5 text-gray-600">Ingresa tu número de empleado.</p>
+      <input id="employee-id-input" class="mb-3 w-full rounded-lg border px-4 py-2" placeholder="Número de empleado">
+      <button id="login-button" class="w-full rounded-lg bg-blue-600 px-4 py-2 font-bold text-white">Continuar</button>
+      <p id="login-error" class="mt-2 text-sm text-red-600"></p>
+    </div>
+  </div>
+
+  <main id="app" class="hidden mx-auto max-w-5xl p-4 sm:p-8">
+    <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div><h1 class="text-3xl font-bold">Cambios urgentes de menú</h1><p class="text-gray-600">El platillo original no se elimina; se registra una sustitución y la respuesta del empleado.</p></div>
+      <a href="./Principal_Menu.html" class="rounded-lg bg-gray-200 px-4 py-2 font-semibold">Administración</a>
+    </header>
+
+    <section class="mb-6 rounded-2xl bg-white p-6 shadow">
+      <label class="mb-2 block font-semibold" for="week-start">Semana a modificar</label>
+      <input id="week-start" type="date" class="rounded-lg border px-3 py-2">
+      <button id="load-week" class="ml-2 rounded-lg bg-blue-600 px-4 py-2 font-bold text-white">Cargar semana</button>
+      <p id="week-label" class="mt-3 text-gray-600"></p>
+    </section>
+
+    <section class="rounded-2xl bg-white p-6 shadow">
+      <h2 class="mb-4 text-xl font-bold">Nueva encuesta de cambio</h2>
+      <div id="no-menu" class="hidden rounded-lg bg-yellow-100 p-4 text-yellow-800">No existe menú para esta semana.</div>
+      <div id="change-form" class="grid gap-4 md:grid-cols-2">
+        <label class="font-semibold">Día
+          <select id="day" class="mt-1 w-full rounded-lg border p-2"></select>
+        </label>
+        <label class="font-semibold">Platillo cancelado
+          <select id="original-option" class="mt-1 w-full rounded-lg border p-2"></select>
+        </label>
+        <label class="font-semibold md:col-span-2">Platillo sustituto
+          <input id="replacement-dish" class="mt-1 w-full rounded-lg border p-2" placeholder="Ej. Pechuga a la plancha">
+        </label>
+        <label class="font-semibold md:col-span-2">Motivo (opcional)
+          <input id="reason" class="mt-1 w-full rounded-lg border p-2" placeholder="Ej. Falta de insumo">
+        </label>
+        <div class="md:col-span-2"><button id="save-change" class="rounded-lg bg-green-600 px-5 py-3 font-bold text-white">Activar encuesta de cambio</button><p id="feedback" class="mt-2 font-semibold"></p></div>
+      </div>
+    </section>
+
+    <section class="mt-6 rounded-2xl bg-white p-6 shadow">
+      <h2 class="mb-4 text-xl font-bold">Cambios activos de esta semana</h2>
+      <div id="change-list" class="space-y-3 text-gray-600">Selecciona una semana.</div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc, updateDoc, getDocs, collection, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = { apiKey: "AIzaSyBRl9cy-k0MfXOz3-StMr497YwCLQT8il0", authDomain: "ceunico.firebaseapp.com", databaseURL: "https://ceunico.firebaseio.com", projectId: "ceunico", storageBucket: "ceunico.firebasestorage.app", messagingSenderId: "750486055882", appId: "1:750486055882:web:f270aa8cbddcbcd0d37d33" };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+    const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+    let employee, weekKey, menu = {};
+
+    const keyForDate = date => new Date(`${date}T12:00:00`).toISOString().split('T')[0];
+    const mondayFor = date => { const d = new Date(`${date}T12:00:00`); const diff = d.getDay() === 0 ? -6 : 1 - d.getDay(); d.setDate(d.getDate() + diff); return d; };
+    const formatRange = date => { const end = new Date(date); end.setDate(end.getDate() + 4); return `Del ${date.toLocaleDateString('es-MX', { day:'numeric', month:'long' })} al ${end.toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' })}`; };
+    function show(message, error = false) { const el = document.getElementById('feedback'); el.className = `mt-2 font-semibold ${error ? 'text-red-600' : 'text-green-600'}`; el.textContent = message; }
+
+    async function validateEmployee(id) { const snap = await getDoc(doc(db, 'employees', id)); return snap.exists() ? { ...snap.data(), employeeId: id } : null; }
+    function fillOptions() {
+      document.getElementById('day').innerHTML = days.map(day => `<option value="${day}">${day}</option>`).join('');
+      updateOriginalOptions();
+    }
+    function updateOriginalOptions() {
+      const day = document.getElementById('day').value;
+      const select = document.getElementById('original-option');
+      select.innerHTML = ['opcion1', 'opcion2'].map(option => `<option value="${option}">Opción ${option.slice(-1)}: ${menu[day]?.[option]?.fuerte || 'No definido'}</option>`).join('');
+    }
+    async function affectedCount(day, originalOption) {
+      const snap = await getDocs(query(collection(db, 'selections'), where('weekStart', '==', weekKey)));
+      return snap.docs.filter(item => item.data().mainSelection?.[day] === originalOption).length;
+    }
+    async function loadChanges() {
+      const list = document.getElementById('change-list');
+      const snap = await getDocs(query(collection(db, 'menu_substitutions'), where('weekStart', '==', weekKey)));
+      if (snap.empty) { list.textContent = 'No hay sustituciones registradas.'; return; }
+      const cards = await Promise.all(snap.docs.map(async item => {
+        const change = item.data(); const affected = await affectedCount(change.day, change.originalOption);
+        return `<article class="rounded-lg border p-4 ${change.active ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50'}"><div class="flex justify-between gap-4"><div><p class="font-bold">${change.day}: ${change.originalDish} → ${change.replacementDish}</p><p class="text-sm">${change.reason || 'Sin motivo indicado'} · ${affected} empleado(s) afectado(s)</p></div><div class="text-right"><span class="font-semibold ${change.active ? 'text-green-700' : 'text-gray-500'}">${change.active ? 'Activa' : 'Cerrada'}</span>${change.active ? `<button class="close-change mt-2 block rounded bg-gray-700 px-3 py-1 text-sm font-semibold text-white" data-id="${item.id}">Cerrar encuesta</button>` : ''}</div></div></article>`;
+      }));
+      list.innerHTML = cards.join('');
+      document.querySelectorAll('.close-change').forEach(button => button.addEventListener('click', async () => {
+        await updateDoc(doc(db, 'menu_substitutions', button.dataset.id), { active: false, closedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        show('Encuesta cerrada. Las respuestas ya registradas se conservan.');
+        await loadChanges();
+      }));
+    }
+    async function loadWeek() {
+      const raw = document.getElementById('week-start').value;
+      if (!raw) return;
+      const monday = mondayFor(raw); weekKey = keyForDate(monday.toISOString().slice(0, 10));
+      document.getElementById('week-start').value = weekKey;
+      document.getElementById('week-label').textContent = formatRange(monday);
+      const snap = await getDoc(doc(db, 'menus', weekKey));
+      menu = snap.exists() ? snap.data().menu : {};
+      document.getElementById('no-menu').classList.toggle('hidden', snap.exists());
+      document.getElementById('change-form').classList.toggle('hidden', !snap.exists());
+      if (snap.exists()) { fillOptions(); await loadChanges(); }
+    }
+    async function saveChange() {
+      const day = document.getElementById('day').value;
+      const originalOption = document.getElementById('original-option').value;
+      const replacementDish = document.getElementById('replacement-dish').value.trim();
+      const reason = document.getElementById('reason').value.trim();
+      if (!replacementDish) return show('Escribe el platillo sustituto.', true);
+      const originalDish = menu[day]?.[originalOption]?.fuerte;
+      if (!originalDish) return show('No se encontró el platillo original.', true);
+      const id = `${weekKey}_${day}_main_${originalOption}`;
+      await setDoc(doc(db, 'menu_substitutions', id), { weekStart: weekKey, day, slot: 'main', originalOption, originalDish, replacementDish, reason, active: true, requiresServiceMode: true, createdBy: employee.employeeId, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+      const count = await affectedCount(day, originalOption);
+      show(`Cambio activado. ${count} empleado(s) recibirán la encuesta.`);
+      document.getElementById('replacement-dish').value = ''; document.getElementById('reason').value = '';
+      await loadChanges();
+    }
+    function enterAdmin(result) {
+      employee = result;
+      document.getElementById('login-modal').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      const today = new Date();
+      const monday = mondayFor(today.toISOString().slice(0, 10));
+      document.getElementById('week-start').value = keyForDate(monday.toISOString().slice(0, 10));
+      loadWeek();
+    }
+    document.getElementById('day').addEventListener('change', updateOriginalOptions);
+    document.getElementById('load-week').addEventListener('click', loadWeek);
+    document.getElementById('save-change').addEventListener('click', saveChange);
+    document.getElementById('login-button').addEventListener('click', async () => {
+      const result = await validateEmployee(document.getElementById('employee-id-input').value.trim());
+      if (!result?.isAdmin) { document.getElementById('login-error').textContent = 'Acceso denegado. Se requiere un administrador.'; return; }
+      sessionStorage.setItem('menuAppUser', JSON.stringify(result));
+      enterAdmin(result);
+    });
+    onAuthStateChanged(auth, () => {
+      const stored = sessionStorage.getItem('menuAppUser');
+      if (stored) {
+        const result = JSON.parse(stored);
+        if (result?.isAdmin) enterAdmin(result);
+      }
+    });
+    signInAnonymously(auth).catch(() => { document.getElementById('login-error').textContent = 'No se pudo conectar con el sistema.'; });
+  </script>
+</body>
+</html>

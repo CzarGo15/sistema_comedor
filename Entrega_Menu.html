@@ -110,7 +110,7 @@
         import { getFirestore, doc, getDoc, getDocs, updateDoc, setDoc, deleteField, collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db, auth;
-        let currentWeekDates, currentDayName, currentMenu;
+        let currentWeekDates, currentDayName, currentMenu, activeSubstitutions = [];
         const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
         function getWeekDates(date) {
@@ -135,6 +135,22 @@
         }
 
         function formatDateForKey(date) { return date.toISOString().split('T')[0]; }
+
+        async function loadActiveSubstitutions(weekKey) {
+            const snapshot = await getDocs(query(collection(db, 'menu_substitutions'), where('weekStart', '==', weekKey)));
+            return snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.active);
+        }
+
+        function getEffectiveMainMeal(selection, day = currentDayName) {
+            const originalOption = selection.mainSelection?.[day];
+            if (!originalOption || originalOption === 'ninguna') return null;
+            const originalDish = currentMenu[day]?.[originalOption]?.fuerte || 'Platillo no definido';
+            const response = selection.substitutionResponses?.[day]?.main;
+            if (response) return { dish: response.replacementDish, mode: response.serviceMode, originalDish: response.originalDish || originalDish, replacement: true, statusType: 'replacement' };
+            const change = activeSubstitutions.find(item => item.slot === 'main' && item.day === day && item.originalOption === originalOption);
+            if (change) return { dish: change.replacementDish, originalDish: change.originalDish || originalDish, pending: true, replacement: true, statusType: 'replacement' };
+            return { dish: originalDish, mode: 'dine_in', replacement: false, statusType: 'main' };
+        }
 
         function showNotification(message, isError = false) {
             const container = document.getElementById('notification-container');
@@ -220,12 +236,15 @@
 
             let hasMeals = false;
             // Menú Principal
-            const mainSelectionKey = selection.mainSelection?.[currentDayName];
-            if (mainSelectionKey && mainSelectionKey !== 'ninguna') {
+            const mainMeal = getEffectiveMainMeal(selection);
+            if (mainMeal && !mainMeal.pending) {
                 hasMeals = true;
-                const mealName = currentMenu[currentDayName]?.[mainSelectionKey]?.fuerte || 'Platillo no definido';
-                const isDelivered = selection.status?.[currentDayName]?.main === 'delivered';
-                detailsHtml += createMealCard('main', 0, 'Menú Principal', mealName, isDelivered, selection.weekStart, selection.employeeId);
+                const statusKey = mainMeal.replacement ? 'replacement_main' : 'main';
+                const isDelivered = selection.status?.[currentDayName]?.[statusKey] === 'delivered';
+                const title = mainMeal.replacement ? `Sustitución (${mainMeal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : 'Menú Principal';
+                detailsHtml += createMealCard(mainMeal.statusType, 0, title, mainMeal.dish, isDelivered, selection.weekStart, selection.employeeId);
+            } else if (mainMeal?.pending) {
+                detailsHtml += `<div class="rounded-lg bg-orange-50 p-4 text-orange-800">La sustitución de <b>${mainMeal.originalDish}</b> está pendiente de confirmación del empleado.</div>`;
             }
 
             // Menús para Llevar
@@ -364,6 +383,8 @@
             let statusKey;
             if (type === 'main') {
                 statusKey = `status.${day}.main`;
+            } else if (type === 'replacement') {
+                statusKey = `status.${day}.replacement_main`;
             } else {
                 statusKey = `status.${day}.takeaway_${number}`;
             }
@@ -400,22 +421,21 @@
             let deliveredMeals = 0;
             const pendingList = [];
             
-            const platilloTotals = {
-                opcion1: { total: 0, delivered: 0, name: 'Opción 1' },
-                opcion2: { total: 0, delivered: 0, name: 'Opción 2' }
-            };
+            const platilloTotals = {};
 
             const todayMenuEl = document.getElementById('today-menu');
             if (currentMenu && currentMenu[currentDayName]) {
-                 platilloTotals.opcion1.name = currentMenu[currentDayName].opcion1.fuerte || 'Opción 1';
-                 platilloTotals.opcion2.name = currentMenu[currentDayName].opcion2.fuerte || 'Opción 2';
+                 const option1 = currentMenu[currentDayName].opcion1.fuerte || 'Opción 1';
+                 const option2 = currentMenu[currentDayName].opcion2.fuerte || 'Opción 2';
+                 platilloTotals[option1] = { total: 0, delivered: 0, name: option1, dineIn: 0, takeaway: 0 };
+                 platilloTotals[option2] = { total: 0, delivered: 0, name: option2, dineIn: 0, takeaway: 0 };
                  
-                 if(todayMenuEl) {
-                    todayMenuEl.innerHTML = `
-                        <p><strong>Opción 1:</strong> ${platilloTotals.opcion1.name}</p>
-                        <p><strong>Opción 2:</strong> ${platilloTotals.opcion2.name}</p>
-                    `;
-                 }
+                  if(todayMenuEl) {
+                     todayMenuEl.innerHTML = `
+                        <p><strong>Opción 1:</strong> ${option1}</p>
+                        <p><strong>Opción 2:</strong> ${option2}</p>
+                     `;
+                  }
             } else {
                  if(todayMenuEl) todayMenuEl.innerHTML = '<p>Menú no definido.</p>';
             }
@@ -424,13 +444,16 @@
                 const selection = doc.data();
                 let employeePending = false;
 
-                const mainSel = selection.mainSelection?.[currentDayName];
-                if (mainSel && mainSel !== 'ninguna') {
+                const mainMeal = getEffectiveMainMeal(selection);
+                if (mainMeal && !mainMeal.pending) {
                     totalMeals++;
-                    if(platilloTotals[mainSel]) platilloTotals[mainSel].total++;
-                    if (selection.status?.[currentDayName]?.main === 'delivered') {
+                    if (!platilloTotals[mainMeal.dish]) platilloTotals[mainMeal.dish] = { total: 0, delivered: 0, name: mainMeal.dish, dineIn: 0, takeaway: 0 };
+                    platilloTotals[mainMeal.dish].total++;
+                    platilloTotals[mainMeal.dish][mainMeal.mode === 'takeaway' ? 'takeaway' : 'dineIn']++;
+                    const statusKey = mainMeal.replacement ? 'replacement_main' : 'main';
+                    if (selection.status?.[currentDayName]?.[statusKey] === 'delivered') {
                         deliveredMeals++;
-                        if(platilloTotals[mainSel]) platilloTotals[mainSel].delivered++;
+                        platilloTotals[mainMeal.dish].delivered++;
                     } else {
                         employeePending = true;
                     }
@@ -441,10 +464,13 @@
                         const takeawaySel = selData[currentDayName];
                         if (takeawaySel && takeawaySel !== 'ninguna') {
                             totalMeals++;
-                            if(platilloTotals[takeawaySel]) platilloTotals[takeawaySel].total++;
+                            const takeawayDish = currentMenu[currentDayName]?.[takeawaySel]?.fuerte || 'Platillo no definido';
+                            if (!platilloTotals[takeawayDish]) platilloTotals[takeawayDish] = { total: 0, delivered: 0, name: takeawayDish, dineIn: 0, takeaway: 0 };
+                            platilloTotals[takeawayDish].total++;
+                            platilloTotals[takeawayDish].takeaway++;
                             if (selection.status?.[currentDayName]?.[`takeaway_${num}`] === 'delivered') {
                                 deliveredMeals++;
-                                if(platilloTotals[takeawaySel]) platilloTotals[takeawaySel].delivered++;
+                                platilloTotals[takeawayDish].delivered++;
                             } else {
                                 employeePending = true;
                             }
@@ -462,28 +488,7 @@
             document.getElementById('pending-meals').textContent = totalMeals - deliveredMeals;
             
             const rationControlEl = document.getElementById('ration-control');
-            rationControlEl.innerHTML = `
-                <div class="border-b pb-4">
-                    <div class="flex justify-between font-semibold">
-                        <span>${platilloTotals.opcion1.name}</span>
-                        <span>Total: ${platilloTotals.opcion1.total}</span>
-                    </div>
-                    <div class="flex justify-between text-sm mt-1">
-                        <span class="text-green-600">Entregadas: ${platilloTotals.opcion1.delivered}</span>
-                        <span class="text-yellow-700 font-medium">Pendientes: ${platilloTotals.opcion1.total - platilloTotals.opcion1.delivered}</span>
-                    </div>
-                </div>
-                <div>
-                    <div class="flex justify-between font-semibold">
-                        <span>${platilloTotals.opcion2.name}</span>
-                        <span>Total: ${platilloTotals.opcion2.total}</span>
-                    </div>
-                    <div class="flex justify-between text-sm mt-1">
-                        <span class="text-green-600">Entregadas: ${platilloTotals.opcion2.delivered}</span>
-                        <span class="text-yellow-700 font-medium">Pendientes: ${platilloTotals.opcion2.total - platilloTotals.opcion2.delivered}</span>
-                    </div>
-                </div>
-            `;
+            rationControlEl.innerHTML = Object.values(platilloTotals).map(item => `<div class="border-b pb-4 last:border-0"><div class="flex justify-between font-semibold"><span>${item.name}</span><span>Total: ${item.total}</span></div><div class="flex justify-between text-sm mt-1"><span>Comedor: ${item.dineIn} · Para llevar: ${item.takeaway}</span><span class="text-green-600">Entregadas: ${item.delivered}</span><span class="text-yellow-700 font-medium">Pendientes: ${item.total - item.delivered}</span></div></div>`).join('');
 
             const pendingListEl = document.getElementById('pending-list');
             if (pendingList.length > 0) {
@@ -523,8 +528,9 @@
                 await signInAnonymously(auth);
                 
                 const menuDocRef = doc(db, "menus", formatDateForKey(currentWeekDates.start));
-                const menuDocSnap = await getDoc(menuDocRef);
-                currentMenu = menuDocSnap.exists() ? menuDocSnap.data().menu : {};
+                 const menuDocSnap = await getDoc(menuDocRef);
+                 currentMenu = menuDocSnap.exists() ? menuDocSnap.data().menu : {};
+                 activeSubstitutions = await loadActiveSubstitutions(formatDateForKey(currentWeekDates.start));
                 
                 const selectionsQuery = query(collection(db, "selections"), where("weekStart", "==", formatDateForKey(currentWeekDates.start)));
                 onSnapshot(selectionsQuery, updateDailySummary);

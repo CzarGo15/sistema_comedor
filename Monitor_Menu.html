@@ -116,7 +116,7 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, getDocs, onSnapshot, collection, query, where, deleteDoc, updateDoc, writeBatch, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        let db, auth, userId, employeeData, currentWeekDates, viewingNextWeek = false;
+        let db, auth, userId, employeeData, currentWeekDates, viewingNextWeek = false, activeSubstitutions = [];
         const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
         const subsidizedPrice = 30;
         const regularPrice = 80;
@@ -144,6 +144,21 @@
             return `Del ${start.toLocaleDateString('es-MX', {day: 'numeric', month: 'long'})} al ${end.toLocaleDateString('es-MX', {day: 'numeric', month: 'long', year: 'numeric'})}`;
         }
         function formatDateForKey(date) { return date.toISOString().split('T')[0]; }
+
+        async function loadActiveSubstitutions(weekKey) {
+            const snapshot = await getDocs(query(collection(db, 'menu_substitutions'), where('weekStart', '==', weekKey)));
+            return snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.active);
+        }
+
+        function getEffectiveMainMeal(selection, day, menuData) {
+            const originalOption = selection.mainSelection?.[day];
+            if (!originalOption || originalOption === 'ninguna') return null;
+            const originalDish = menuData[day]?.[originalOption]?.fuerte || 'N/A';
+            const response = selection.substitutionResponses?.[day]?.main;
+            if (response) return { dish: response.replacementDish, originalDish: response.originalDish || originalDish, mode: response.serviceMode, replacement: true, pending: false };
+            const change = activeSubstitutions.find(item => item.slot === 'main' && item.day === day && item.originalOption === originalOption);
+            return change ? { dish: change.replacementDish, originalDish: change.originalDish || originalDish, replacement: true, pending: true } : { dish: originalDish, replacement: false, pending: false };
+        }
 
         function showNotification(message, isError = false) {
             const container = document.getElementById('notification-container');
@@ -240,14 +255,20 @@
                             
                             if (selection.mainSelection) {
                                 const mainSel = selection.mainSelection[day];
-                                if (mainSel && mainSel !== 'ninguna') {
-                                    const food = menuData[day]?.[mainSel]?.fuerte || 'N/A';
+                                const mainMeal = getEffectiveMainMeal(selection, day, menuData);
+                                if (mainMeal && !mainMeal.pending) {
+                                    const food = mainMeal.dish;
                                     if (food !== 'N/A') {
                                         totals[day][food] = (totals[day][food] || 0) + 1;
                                         grandTotalMeals++;
                                     }
-                                    const isDelivered = selection.status?.[day]?.main === 'delivered';
-                                    cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${isDelivered ? 'bg-green-200' : 'bg-blue-100'}">${food}</div>`;
+                                    const statusKey = mainMeal.replacement ? 'replacement_main' : 'main';
+                                    const isDelivered = selection.status?.[day]?.[statusKey] === 'delivered';
+                                    const prefix = mainMeal.replacement ? `Sustitución${mainMeal.mode ? ` · ${mainMeal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'}` : ''}: ` : '';
+                                    const original = mainMeal.replacement ? `<span class="line-through text-gray-500">${mainMeal.originalDish}</span> → ` : '';
+                                    cellHtml += `<div class="mb-1 p-1 rounded-md text-xs ${isDelivered ? 'bg-green-200' : 'bg-blue-100'}">${prefix}${original}${food}</div>`;
+                                } else if (mainMeal?.pending) {
+                                    cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-orange-100 text-orange-800">Sustitución pendiente: ${mainMeal.originalDish} → ${mainMeal.dish}</div>`;
                                 } else if (mainSel === 'ninguna') {
                                      cellHtml += `<div class="mb-1 p-1 rounded-md text-xs bg-gray-200 text-gray-600">Ninguna</div>`;
                                 }
@@ -480,8 +501,8 @@
                         "NOMBRE": selection.employeeName,
                     };
                     days.forEach(day => {
-                        const mainSel = selection.mainSelection?.[day];
-                        mainRow[day.toUpperCase()] = (mainSel && mainSel !== 'ninguna') ? (menuData[day]?.[mainSel]?.fuerte || 'N/A') : 'Ninguna';
+                        const mainMeal = getEffectiveMainMeal(selection, day, menuData);
+                        mainRow[day.toUpperCase()] = mainMeal ? (mainMeal.pending ? `PENDIENTE: ${mainMeal.originalDish} → ${mainMeal.dish}` : `${mainMeal.replacement ? `${mainMeal.originalDish} → ` : ''}${mainMeal.dish}${mainMeal.mode ? ` (${mainMeal.mode === 'takeaway' ? 'Para llevar' : 'Comedor'})` : ''}`) : 'Ninguna';
                     });
                     excelRows.push(mainRow);
                     
@@ -635,11 +656,12 @@
         }
         
         let unsubscribe;
-        function loadMonitoringData() {
+        async function loadMonitoringData() {
             if (unsubscribe) unsubscribe();
 
             const weekToShow = viewingNextWeek ? getWeekDates(new Date(), 1) : currentWeekDates;
             const weekKey = formatDateForKey(weekToShow.start);
+            activeSubstitutions = await loadActiveSubstitutions(weekKey);
             
             const rangeEl = document.getElementById('monitoring-week-range');
             const toggleText = document.getElementById('view-toggle-text');
